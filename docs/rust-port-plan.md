@@ -100,6 +100,9 @@ Fase 0–3 kan bygges og testes i skyen, i denne Linux-containeren. GUI-en og Vu
 ## Status
 
 - **Fase 0: ferdig.** Workspace, `llama-sys` (llama.cpp b11461 med patchen, CPU og Vulkan), `digger info` og CI (`.github/workflows/rust.yml`).
+- **Fase 1: kode skrevet, venter på modellen.** `digger-core` (regler, crawler, mappevalg, indeks med DigUps skjema 5, søk, indeksering av dokumenter og kode, lange filer i to omganger), `digger-embed` (llama.cpp-embedder for tekst, bilder og lyd, nedlasting av modellen) og CLI-en `digger download / index / search / status / eval`. 61 tester passerer. Det som gjenstår, er å kjøre referansevektortesten og evalene med den ekte modellen: skyøkta får ikke laste ned fra Hugging Face.
+  - Bilder, PDF-er, lyd og video blir funnet og står i kø (`pending`) til fase 2 lærer Digger å lese dem.
+  - .doc leses med `antiword` eller `catdoc` hvis en av dem er installert.
 
 Bygg selv på Omarchy:
 
@@ -108,6 +111,11 @@ sudo pacman -S --needed rust cmake clang vulkan-headers vulkan-icd-loader shader
 scripts/fetch-llama.sh
 cargo build --release --features vulkan
 target/release/digger info    # skal vise RTX 3060 som Vulkan-enhet
+target/release/digger download
+cargo test --release --features vulkan -p digger-embed -- --nocapture   # referansevektorene: cosinus ≥ 0,999
+target/release/digger index ~/Documents
+target/release/digger search "leieavtale om husdyr"
+target/release/digger index --code ~/kode && target/release/digger search "code: retry with backoff"
 ```
 
 ## Risiko

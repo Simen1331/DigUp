@@ -6,8 +6,13 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-vulkan = ["llama-sys/vulkan"]
-cuda = ["llama-sys/cuda"]
+vulkan = ["digger-embed/vulkan"]
+cuda = ["digger-embed/cuda"]
 
 [dependencies]
-llama-sys = { path = "../llama-sys" }
+anyhow = "1"
+clap = { version = "4.6", features = ["derive"] }
+digger-core = { path = "../digger-core" }
+digger-embed = { path = "../digger-embed" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
