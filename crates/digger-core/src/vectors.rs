@@ -37,7 +37,7 @@ impl VectorStorage {
             return false;
         }
         self.halves
-            .extend(bytes.chunks_exact(2).map(|pair| f16::from_le_bytes([pair[0], pair[1]])));
+            .extend(bytes.as_chunks::<2>().0.iter().map(|pair| f16::from_le_bytes(*pair)));
         true
     }
 
@@ -62,7 +62,7 @@ impl VectorStorage {
                 &self.halves[row * DIMENSION..(row + count) * DIMENSION],
                 block,
             );
-            for (offset, vector) in block.chunks_exact(DIMENSION).enumerate() {
+            for (offset, vector) in block.as_chunks::<DIMENSION>().0.iter().enumerate() {
                 scores[row + offset] = dot(vector, query);
             }
             row += count;
@@ -74,14 +74,9 @@ impl VectorStorage {
 /// A dot product the compiler vectorizes: eight running sums.
 pub fn dot(a: &[f32], b: &[f32]) -> f32 {
     let mut sums = [0.0f32; 8];
-    let (a_chunks, b_chunks) = (a.chunks_exact(8), b.chunks_exact(8));
-    let tail: f32 = a_chunks
-        .remainder()
-        .iter()
-        .zip(b_chunks.remainder())
-        .map(|(x, y)| x * y)
-        .sum();
-    for (x, y) in a_chunks.zip(b_chunks) {
+    let ((a_chunks, a_tail), (b_chunks, b_tail)) = (a.as_chunks::<8>(), b.as_chunks::<8>());
+    let tail: f32 = a_tail.iter().zip(b_tail).map(|(x, y)| x * y).sum();
+    for (x, y) in a_chunks.iter().zip(b_chunks) {
         for lane in 0..8 {
             sums[lane] += x[lane] * y[lane];
         }
