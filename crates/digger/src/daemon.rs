@@ -46,6 +46,8 @@ struct Shared {
     generation: AtomicU64,
     /// The search thread: it owns the searchers and the query encoder.
     search: mpsc::Sender<SearchJob>,
+    /// Files indexed since things were last quiet: a big pass that ends is worth a notification.
+    indexed: AtomicU64,
 }
 
 #[derive(Default)]
@@ -118,6 +120,7 @@ pub fn run() -> Result<()> {
         config: Mutex::new(config),
         generation: AtomicU64::new(0),
         search: search_jobs,
+        indexed: AtomicU64::new(0),
     });
     eprintln!("digger daemon: listening on {}", socket.display());
 
@@ -242,6 +245,7 @@ fn indexing_loop(shared: &Arc<Shared>) {
             }
             Err(error) => {
                 // A fatal problem (another model's index, a database error): say so, and wait to be told what to do.
+                notify("Digger stopped indexing", &format!("{error:#}"));
                 shared.update(|status| {
                     status.state = "error".into();
                     status.detail = Some(format!("{error:#}"));
@@ -379,6 +383,12 @@ fn index_with(shared: &Arc<Shared>, config: &Config) -> Result<Stop> {
             };
             status.current = None;
         });
+        // A big pass is through: say so once (a few new files at a time aren't news).
+        let indexed = shared.indexed.swap(0, Ordering::Relaxed);
+        if waiting == 0 && indexed >= 50 {
+            let files = shared.status.lock().unwrap().searchable;
+            notify("Your folders are searchable", &format!("{indexed} files read, {files} searchable in all."));
+        }
         // Keep the model warm a little (screenshots come in bursts), then let it go.
         let linger = Duration::from_secs_f64(config.linger_seconds.max(1.0));
         if model.is_running() && !wait_for_work(shared, linger, &[&main, &code]) {
@@ -508,6 +518,7 @@ fn embed(shared: &Shared, part: &mut Part, only: Option<&[i64]>) -> Result<()> {
     });
     let result = part.indexer.run(None, only, &mut should_stop, &mut |event| {
         shared.generation.fetch_add(1, Ordering::Relaxed);
+        shared.indexed.fetch_add(1, Ordering::Relaxed);
         shared.update(|status| {
             status.current = Some(event.path.clone());
             status.done = event.done;
@@ -1135,9 +1146,13 @@ fn download(shared: &Arc<Shared>) {
         match result {
             Ok(()) => {
                 shared.update(|status| status.model = state("ready", 1.0, None));
+                notify("Digger's model is ready", "Your files are being read now.");
                 shared.request(|control| control.sync = true);
             }
-            Err(error) => shared.update(|status| status.model = state("failed", 0.0, Some(error))),
+            Err(error) => {
+                notify("Digger couldn't download its model", &error);
+                shared.update(|status| status.model = state("failed", 0.0, Some(error)));
+            }
         }
     });
 }
@@ -1169,4 +1184,14 @@ fn watch(writer: &mut UnixStream, shared: &Shared) {
         }
         thread::sleep(Duration::from_millis(500));
     }
+}
+
+/// A desktop notification (mako on Omarchy), through notify-send. Quietly nothing without it.
+fn notify(summary: &str, body: &str) {
+    let _ = std::process::Command::new("notify-send")
+        .args(["--app-name=Digger", "--icon=system-search", summary, body])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }

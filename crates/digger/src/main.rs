@@ -86,7 +86,11 @@ enum Command {
         code: bool,
     },
     /// Pauses the big first pass (new files are still indexed).
-    Pause,
+    Pause {
+        /// Resume if it's paused (a Waybar click).
+        #[arg(long)]
+        toggle: bool,
+    },
     /// Lets it go on.
     Resume,
     /// Makes the daemon read config.toml again.
@@ -215,7 +219,14 @@ fn run(cli: Cli) -> Result<()> {
         Command::Daemon => daemon::run(),
         Command::Add { folders, code } => change_folders(&folders, code, true),
         Command::Remove { folders, code } => change_folders(&folders, code, false),
-        Command::Pause => daemon_command(&Request::Pause),
+        Command::Pause { toggle } => {
+            let paused = toggle
+                && Client::connect()
+                    .and_then(|mut client| client.send(&Request::Status).ok())
+                    .and_then(|response| response.status)
+                    .is_some_and(|status| status.state == "paused");
+            daemon_command(if paused { &Request::Resume } else { &Request::Pause })
+        }
         Command::Resume => daemon_command(&Request::Resume),
         Command::Reload => daemon_command(&Request::Reload),
         Command::Eval { file, index, tuning, n } => evaluate(&file, &index, &tuning, n),
@@ -692,7 +703,16 @@ fn print_waybar(status: Option<&protocol::Status>) {
                 tooltip += &format!("\nlast problem: {error}");
             }
             let busy = matches!(status.state.as_str(), "syncing" | "indexing" | "finishing");
-            let text = if busy && status.pending > 0 { format!("{icon} {percent}%") } else { icon.to_string() };
+            // Nothing to say when all is well: Waybar hides a module with no text.
+            let text = match status.state.as_str() {
+                _ if busy && status.pending > 0 => format!("{icon} {percent}%"),
+                "paused" | "waiting" if status.pending > 0 => format!("{icon} {}", status.state),
+                "error" => format!("{icon} !"),
+                _ if status.model.state == "downloading" => {
+                    format!("{icon} {}%", (status.model.fraction * 100.0) as u32)
+                }
+                _ => String::new(),
+            };
             serde_json::json!({"text": text, "tooltip": tooltip, "class": status.state, "alt": status.state, "percentage": percent})
         }
     };
