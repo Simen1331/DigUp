@@ -1,0 +1,37 @@
+# Builds and tests Digger, the Rust port, on Linux: with the CPU backend, and with Vulkan (built, not run: the runners
+# have no GPU).
+name: Rust
+
+on:
+  push:
+    paths: ["crates/**", "Cargo.*", "rustfmt.toml", "scripts/fetch-llama.sh", "scripts/build-llama.sh",
+            "scripts/llama.cpp-no-logits.patch", ".github/workflows/rust.yml"]
+  pull_request:
+    paths: ["crates/**", "Cargo.*", "rustfmt.toml", "scripts/fetch-llama.sh", "scripts/build-llama.sh",
+            "scripts/llama.cpp-no-logits.patch", ".github/workflows/rust.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        features: ["", "vulkan"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Vulkan headers and shader compiler
+        if: matrix.features == 'vulkan'
+        run: sudo apt-get update -q && sudo apt-get install -y -q libvulkan-dev glslc
+      - run: scripts/fetch-llama.sh
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+          key: ${{ runner.os }}-${{ matrix.features }}-${{ hashFiles('Cargo.lock', 'scripts/build-llama.sh', 'scripts/llama.cpp-no-logits.patch') }}
+      - run: cargo fmt --check
+      - run: cargo clippy --release --features "${{ matrix.features }}" -- -D warnings
+      - run: cargo test --release --features "${{ matrix.features }}"
+      - run: target/release/digger info

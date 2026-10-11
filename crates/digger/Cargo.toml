@@ -1,0 +1,13 @@
+[package]
+name = "digger"
+description = "Search your files by what's in them, with EmbeddingGemma 2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+vulkan = ["llama-sys/vulkan"]
+cuda = ["llama-sys/cuda"]
+
+[dependencies]
+llama-sys = { path = "../llama-sys" }

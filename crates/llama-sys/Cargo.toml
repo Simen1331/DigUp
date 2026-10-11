@@ -1,0 +1,16 @@
+[package]
+name = "llama-sys"
+description = "llama.cpp and its multimodal library (mtmd), built from Vendor/llama.cpp, with raw bindings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+links = "llama"
+
+[features]
+# GPU backends. The CPU backend is always built, and llama.cpp falls back to it.
+vulkan = []
+cuda = []
+
+[build-dependencies]
+bindgen = "0.73"
+cmake = "0.1"

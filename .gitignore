@@ -19,3 +19,6 @@ __pycache__/
 evals/*.local.json
 
 .DS_Store
+
+# Rust
+/target/

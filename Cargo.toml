@@ -1,0 +1,10 @@
+# Digger: the Linux (Rust) port of DigUp. The Swift package next to it stays until the port catches up.
+[workspace]
+resolver = "3"
+members = ["crates/llama-sys", "crates/digger"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/Simen1331/DigUp"
