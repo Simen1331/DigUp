@@ -51,4 +51,4 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --release --features "${{ matrix.features }}" -- -D warnings
       - run: cargo test --release --features "${{ matrix.features }}"
-      - run: cargo run --release --features "${{ matrix.features }}" -- info
+      - run: cargo run --release --bin digger --features "${{ matrix.features }}" -- info
