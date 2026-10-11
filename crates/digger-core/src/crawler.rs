@@ -80,13 +80,8 @@ pub fn crawl(roots: &[PathBuf], options: &IndexOptions) -> CrawlReport {
             entries.sort_by(|a, b| b.0.cmp(&a.0)); // popped in name order
             for (path, meta) in entries {
                 if meta.is_dir() {
-                    let reason = rules::skip_reason_for_folder(&path, &home, &skips).or_else(|| {
-                        if options.code {
-                            rules::code_skip_reason(Path::new(&path))
-                        } else {
-                            None
-                        }
-                    });
+                    let reason = rules::skip_reason_for_folder(&path, &home, &skips)
+                        .or_else(|| if options.code { rules::code_skip_reason(Path::new(&path)) } else { None });
                     if let Some(reason) = reason {
                         *report.skipped_folders.entry(reason.into()).or_default() += 1;
                         continue;
@@ -127,10 +122,7 @@ pub fn crawl(roots: &[PathBuf], options: &IndexOptions) -> CrawlReport {
                         options.max_code_bytes
                     };
                     if meta.len() > limit {
-                        *report
-                            .skipped
-                            .entry("too big to be written by hand".into())
-                            .or_default() += 1;
+                        *report.skipped.entry("too big to be written by hand".into()).or_default() += 1;
                         continue;
                     }
                     if repos.ignores(&path) {
@@ -182,22 +174,14 @@ pub fn crawl(roots: &[PathBuf], options: &IndexOptions) -> CrawlReport {
             .iter()
             .map(|file| {
                 let path = Path::new(&file.path);
-                let stem = path
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .unwrap_or("")
-                    .to_string();
+                let stem = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or("").to_string();
                 (folder_selection::parent(&file.path).to_string(), stem)
             })
             .collect();
         let files: Vec<DatasetFile> = kept
             .iter()
             .zip(&stems)
-            .map(|(file, (folder, stem))| DatasetFile {
-                folder,
-                stem,
-                kind: file.kind,
-            })
+            .map(|(file, (folder, stem))| DatasetFile { folder, stem, kind: file.kind })
             .collect();
         let datasets = rules::dataset_folders(&files, &root_paths, 300);
         if !datasets.is_empty() {
@@ -260,11 +244,7 @@ impl GitRepos {
             return known.clone();
         }
         let parent = folder_selection::parent(folder);
-        let answer = if parent != folder && parent.len() > 1 {
-            self.repo(parent)
-        } else {
-            None
-        };
+        let answer = if parent != folder && parent.len() > 1 { self.repo(parent) } else { None };
         self.repo_of.insert(folder.to_string(), answer.clone());
         answer
     }
@@ -285,15 +265,7 @@ impl GitRepos {
 /// say (no git, not a repo, an error).
 fn git_files(repo: &str) -> Option<HashSet<String>> {
     let output = Command::new("git")
-        .args([
-            "-C",
-            repo,
-            "ls-files",
-            "-z",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-        ])
+        .args(["-C", repo, "ls-files", "-z", "--cached", "--others", "--exclude-standard"])
         // Reading only: never wait for, or take, the repo's lock (an editor's git may be busy in it).
         .env("GIT_OPTIONAL_LOCKS", "0")
         .stdin(Stdio::null())
@@ -325,11 +297,8 @@ mod tests {
 
     fn names(report: &CrawlReport, root: &Path) -> Vec<String> {
         let prefix = format!("{}/", standardized(root));
-        let mut names: Vec<String> = report
-            .candidates
-            .iter()
-            .map(|file| file.path.trim_start_matches(&prefix).to_string())
-            .collect();
+        let mut names: Vec<String> =
+            report.candidates.iter().map(|file| file.path.trim_start_matches(&prefix).to_string()).collect();
         names.sort();
         names
     }
@@ -338,10 +307,7 @@ mod tests {
     fn nested_roots_are_crawled_once() {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "inner/trip.txt", "notes about the trip");
-        let report = crawl(
-            &[dir.path().to_path_buf(), dir.path().join("inner")],
-            &IndexOptions::default(),
-        );
+        let report = crawl(&[dir.path().to_path_buf(), dir.path().join("inner")], &IndexOptions::default());
         assert_eq!(names(&report, dir.path()), ["inner/trip.txt"]);
     }
 
@@ -360,18 +326,12 @@ mod tests {
         let downloads = dir.path().join("D");
         let courses = downloads.join("Media/Courses");
         let options = IndexOptions {
-            excluded_folders: vec![
-                standardized(&downloads.join("Media")),
-                standardized(&courses.join("Old")),
-            ],
+            excluded_folders: vec![standardized(&downloads.join("Media")), standardized(&courses.join("Old"))],
             ..Default::default()
         };
         let report = crawl(&[downloads, courses], &options);
-        let mut found: Vec<String> = report
-            .candidates
-            .iter()
-            .map(|file| file.path.rsplit('/').next().unwrap().to_string())
-            .collect();
+        let mut found: Vec<String> =
+            report.candidates.iter().map(|file| file.path.rsplit('/').next().unwrap().to_string()).collect();
         found.sort();
         assert_eq!(found, ["top.txt", "week1.txt"]);
     }
@@ -396,19 +356,10 @@ mod tests {
         write(root, "app/sub/.git", "gitdir: ../.git/modules/sub\n"); // a submodule
         write(root, "app/sub/lib.py", "x = 4\n");
         write(root, "loose/backup.sh", "rsync\n"); // not in a repo: everything code counts
-        Command::new("git")
-            .args(["-C", root.to_str().unwrap(), "init", "-q", "app"])
-            .output()
-            .unwrap();
-        let code = IndexOptions {
-            code: true,
-            ..Default::default()
-        };
+        Command::new("git").args(["-C", root.to_str().unwrap(), "init", "-q", "app"]).output().unwrap();
+        let code = IndexOptions { code: true, ..Default::default() };
         let report = crawl(&[root.to_path_buf()], &code);
-        assert_eq!(
-            names(&report, root),
-            ["app/README.md", "app/main.py", "app/notes/todo.md", "loose/backup.sh"]
-        );
+        assert_eq!(names(&report, root), ["app/README.md", "app/main.py", "app/notes/todo.md", "loose/backup.sh"]);
         assert_eq!(report.skipped.get("ignored by git"), Some(&1));
         assert_eq!(report.skipped_folders.get("vendored or built code"), Some(&2));
         assert_eq!(report.skipped_folders.get("submodule or worktree"), Some(&1));
@@ -416,10 +367,6 @@ mod tests {
         let sub = crawl(&[root.join("app")], &code);
         assert!(!sub.candidates.iter().any(|file| file.path.ends_with("scratch.py")));
         // The main index never takes code from a code project (only its screenshots).
-        assert!(
-            crawl(&[root.to_path_buf()], &IndexOptions::default())
-                .candidates
-                .is_empty()
-        );
+        assert!(crawl(&[root.to_path_buf()], &IndexOptions::default()).candidates.is_empty());
     }
 }

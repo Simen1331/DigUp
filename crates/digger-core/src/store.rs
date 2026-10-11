@@ -81,12 +81,7 @@ impl IndexStore {
         let db = Connection::open(&file)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
         db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;")?;
-        let store = IndexStore {
-            directory: directory.to_path_buf(),
-            file,
-            db,
-            scope: std::cell::RefCell::new(None),
-        };
+        let store = IndexStore { directory: directory.to_path_buf(), file, db, scope: std::cell::RefCell::new(None) };
         store.migrate()?;
         Ok(store)
     }
@@ -102,28 +97,20 @@ impl IndexStore {
     /// Bytes on disk: the database and its write-ahead log.
     pub fn size(file: &Path) -> u64 {
         let wal = PathBuf::from(format!("{}-wal", file.display()));
-        [file.to_path_buf(), wal]
-            .iter()
-            .filter_map(|path| std::fs::metadata(path).ok())
-            .map(|meta| meta.len())
-            .sum()
+        [file.to_path_buf(), wal].iter().filter_map(|path| std::fs::metadata(path).ok()).map(|meta| meta.len()).sum()
     }
 
     fn migrate(&self) -> Result<()> {
         let version: i64 = self.db.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if version > Self::SCHEMA_VERSION {
-            return Err(failure(format!(
-                "this index was made by a newer Digger (schema {version})"
-            )));
+            return Err(failure(format!("this index was made by a newer Digger (schema {version})")));
         }
         if version == Self::SCHEMA_VERSION {
             return Ok(());
         }
         if version != 0 {
             // DigUp's schemas 1–4 never reach Linux: indexes made there are copied at version 5 or not at all.
-            return Err(failure(format!(
-                "this index has DigUp's old schema {version}: open it in DigUp first"
-            )));
+            return Err(failure(format!("this index has DigUp's old schema {version}: open it in DigUp first")));
         }
         self.db.busy_timeout(std::time::Duration::from_secs(60))?;
         self.transaction(|db| {
@@ -196,11 +183,7 @@ impl IndexStore {
         if scope.is_empty() {
             return (" AND 0".into(), Vec::new());
         }
-        let sql = scope
-            .iter()
-            .map(|_| "(path >= ? AND path < ?)")
-            .collect::<Vec<_>>()
-            .join(" OR ");
+        let sql = scope.iter().map(|_| "(path >= ? AND path < ?)").collect::<Vec<_>>().join(" OR ");
         let values = scope.iter().flat_map(|root| prefix_range(root)).collect();
         (format!(" AND ({sql})"), values)
     }
@@ -208,9 +191,7 @@ impl IndexStore {
     // Meta
 
     pub fn meta(&self, key: &str) -> Result<Option<String>> {
-        self.db
-            .query_row("SELECT value FROM meta WHERE key = ?", [key], |row| row.get(0))
-            .optional()
+        self.db.query_row("SELECT value FROM meta WHERE key = ?", [key], |row| row.get(0)).optional()
     }
 
     pub fn set_meta(&self, key: &str, value: Option<&str>) -> Result<()> {
@@ -244,15 +225,10 @@ impl IndexStore {
     /// Every file under one of `roots`.
     pub fn files_under(&self, roots: &[String]) -> Result<Vec<FileRecord>> {
         let mut out = Vec::new();
-        let mut statement = self.db.prepare(&format!(
-            "SELECT {} FROM files WHERE path >= ? AND path < ?",
-            Self::FILE_COLUMNS
-        ))?;
+        let mut statement =
+            self.db.prepare(&format!("SELECT {} FROM files WHERE path >= ? AND path < ?", Self::FILE_COLUMNS))?;
         // A folder inside another one listed is already covered (each file once).
-        for root in roots
-            .iter()
-            .filter(|root| !roots.iter().any(|other| folder_selection::is_inside(root, other)))
-        {
+        for root in roots.iter().filter(|root| !roots.iter().any(|other| folder_selection::is_inside(root, other))) {
             let rows = statement.query_map(params_from_iter(prefix_range(root)), Self::record)?;
             for row in rows {
                 out.push(row?);
@@ -265,14 +241,7 @@ impl IndexStore {
     pub fn insert(&self, file: &Candidate) -> Result<i64> {
         self.db.execute(
             "INSERT INTO files(path, kind, size, mtime, inode, device) VALUES(?, ?, ?, ?, ?, ?)",
-            params![
-                file.path,
-                file.kind.as_str(),
-                file.size,
-                file.mtime,
-                file.inode as i64,
-                file.device as i64
-            ],
+            params![file.path, file.kind.as_str(), file.size, file.mtime, file.inode as i64, file.device as i64],
         )?;
         let id = self.db.last_insert_rowid();
         self.add_name_row(id, &file.path)?;
@@ -285,14 +254,7 @@ impl IndexStore {
         self.db.execute(
             "UPDATE files SET kind = ?, size = ?, mtime = ?, inode = ?, device = ?, state = 'pending', detail = NULL,
                 info = NULL, indexed_at = NULL WHERE id = ?",
-            params![
-                file.kind.as_str(),
-                file.size,
-                file.mtime,
-                file.inode as i64,
-                file.device as i64,
-                id
-            ],
+            params![file.kind.as_str(), file.size, file.mtime, file.inode as i64, file.device as i64, id],
         )?;
         Ok(())
     }
@@ -309,8 +271,7 @@ impl IndexStore {
 
     /// Same inode, size and date at a new path: a move or rename. Only the path changes; nothing is re-embedded.
     pub fn move_file(&self, id: i64, path: &str) -> Result<()> {
-        self.db
-            .execute("UPDATE files SET path = ? WHERE id = ?", params![path, id])?;
+        self.db.execute("UPDATE files SET path = ? WHERE id = ?", params![path, id])?;
         self.db.execute(
             "UPDATE fts SET name = ?, body = ? WHERE rowid IN (SELECT id FROM segments WHERE file = ? AND kind = 'name')",
             params![search_text::normalized(name_text(path)), search_text::normalized(&folder_text(path)), id],
@@ -319,10 +280,7 @@ impl IndexStore {
     }
 
     pub fn delete(&self, id: i64) -> Result<()> {
-        self.db.execute(
-            "DELETE FROM fts WHERE rowid IN (SELECT id FROM segments WHERE file = ?)",
-            [id],
-        )?;
+        self.db.execute("DELETE FROM fts WHERE rowid IN (SELECT id FROM segments WHERE file = ?)", [id])?;
         self.db.execute("DELETE FROM files WHERE id = ?", [id])?;
         Ok(())
     }
@@ -350,15 +308,9 @@ impl IndexStore {
     /// Queues every file again and forgets the fingerprint (after the model or settings changed).
     pub fn reset_all(&self) -> Result<()> {
         self.transaction(|db| {
-            db.execute(
-                "DELETE FROM fts WHERE rowid IN (SELECT id FROM segments WHERE kind != 'name')",
-                [],
-            )?;
+            db.execute("DELETE FROM fts WHERE rowid IN (SELECT id FROM segments WHERE kind != 'name')", [])?;
             db.execute("DELETE FROM segments WHERE kind != 'name'", [])?;
-            db.execute(
-                "UPDATE files SET state = 'pending', detail = NULL, info = NULL, indexed_at = NULL",
-                [],
-            )?;
+            db.execute("UPDATE files SET state = 'pending', detail = NULL, info = NULL, indexed_at = NULL", [])?;
             db.execute("DELETE FROM meta WHERE key = 'fingerprint'", [])?;
             Ok(())
         })
@@ -374,20 +326,12 @@ impl IndexStore {
         if only.is_some_and(|ids| ids.is_empty()) {
             return Ok(Vec::new());
         }
-        let ids = only.map(|ids| {
-            format!(
-                " AND id IN ({})",
-                ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",")
-            )
-        });
+        let ids = only
+            .map(|ids| format!(" AND id IN ({})", ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",")));
         let kinds = kinds.map(|kinds| {
             format!(
                 " AND kind IN ({})",
-                kinds
-                    .iter()
-                    .map(|kind| format!("'{}'", kind.as_str()))
-                    .collect::<Vec<_>>()
-                    .join(",")
+                kinds.iter().map(|kind| format!("'{}'", kind.as_str())).collect::<Vec<_>>().join(",")
             )
         });
         let (scope, mut values) = self.scope_sql();
@@ -419,11 +363,7 @@ impl IndexStore {
         let kinds = kinds.map(|kinds| {
             format!(
                 " AND kind IN ({})",
-                kinds
-                    .iter()
-                    .map(|kind| format!("'{}'", kind.as_str()))
-                    .collect::<Vec<_>>()
-                    .join(",")
+                kinds.iter().map(|kind| format!("'{}'", kind.as_str())).collect::<Vec<_>>().join(",")
             )
         });
         let sql = format!(
@@ -447,25 +387,15 @@ impl IndexStore {
                 FROM files WHERE state = 'partial'{scope}"
             ),
             params_from_iter(values),
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)? as usize,
-                    row.get::<_, Option<i64>>(1)?.unwrap_or(0) as usize,
-                ))
-            },
+            |row| Ok((row.get::<_, i64>(0)? as usize, row.get::<_, Option<i64>>(1)?.unwrap_or(0) as usize)),
         )
     }
 
     /// What indexing learned about a file (`finish`'s `info`).
     pub fn info(&self, id: i64) -> Result<Info> {
-        let json: Option<String> = self
-            .db
-            .query_row("SELECT info FROM files WHERE id = ?", [id], |row| row.get(0))
-            .optional()?
-            .flatten();
-        Ok(json
-            .and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default())
+        let json: Option<String> =
+            self.db.query_row("SELECT info FROM files WHERE id = ?", [id], |row| row.get(0)).optional()?.flatten();
+        Ok(json.and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default())
     }
 
     /// The last page or chunk stored for a file (where a long file's reading got to, when its info doesn't say).
@@ -478,15 +408,8 @@ impl IndexStore {
     }
 
     pub fn finish(&self, id: i64, state: &str, detail: Option<&str>, info: &Info) -> Result<()> {
-        let json = if info.is_empty() {
-            None
-        } else {
-            serde_json::to_string(info).ok()
-        };
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|since| since.as_secs_f64())
-            .unwrap_or(0.0);
+        let json = if info.is_empty() { None } else { serde_json::to_string(info).ok() };
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|since| since.as_secs_f64()).unwrap_or(0.0);
         self.db.execute(
             "UPDATE files SET state = ?, detail = ?, info = ?, indexed_at = ? WHERE id = ?",
             params![state, detail, json, now, id],
@@ -512,15 +435,7 @@ impl IndexStore {
         let modality = if vector.is_some() { modality } else { Modality::None };
         self.db.execute(
             "INSERT INTO segments(file, kind, modality, loc, loc_end, excerpt, vec) VALUES(?, ?, ?, ?, ?, ?, ?)",
-            params![
-                file,
-                kind.as_str(),
-                modality.as_str(),
-                loc,
-                loc_end,
-                excerpt,
-                vector.map(vectors::half_bytes)
-            ],
+            params![file, kind.as_str(), modality.as_str(), loc, loc_end, excerpt, vector.map(vectors::half_bytes)],
         )?;
         if let Some(text) = text.filter(|text| !text.is_empty()) {
             let (body, original) = keyword_text(text);
@@ -533,10 +448,7 @@ impl IndexStore {
     }
 
     fn add_name_row(&self, file: i64, path: &str) -> Result<()> {
-        self.db.execute(
-            "INSERT INTO segments(file, kind, modality) VALUES(?, 'name', 'none')",
-            [file],
-        )?;
+        self.db.execute("INSERT INTO segments(file, kind, modality) VALUES(?, 'name', 'none')", [file])?;
         self.db.execute(
             "INSERT INTO fts(rowid, name, body) VALUES(?, ?, ?)",
             params![
@@ -554,8 +466,7 @@ impl IndexStore {
             &format!("DELETE FROM fts WHERE rowid IN (SELECT id FROM segments WHERE file = ? {filter})"),
             [file],
         )?;
-        self.db
-            .execute(&format!("DELETE FROM segments WHERE file = ? {filter}"), [file])?;
+        self.db.execute(&format!("DELETE FROM segments WHERE file = ? {filter}"), [file])?;
         Ok(())
     }
 
@@ -565,9 +476,9 @@ impl IndexStore {
         let mut counts = Counts::default();
         let (scope, values) = self.scope_sql();
         {
-            let mut statement = self.db.prepare(&format!(
-                "SELECT kind, state, COUNT(*) FROM files WHERE 1{scope} GROUP BY kind, state"
-            ))?;
+            let mut statement = self
+                .db
+                .prepare(&format!("SELECT kind, state, COUNT(*) FROM files WHERE 1{scope} GROUP BY kind, state"))?;
             let mut rows = statement.query(params_from_iter(values.clone()))?;
             while let Some(row) = rows.next()? {
                 counts
@@ -622,24 +533,12 @@ fn name_text(path: &str) -> &str {
 fn folder_text(path: &str) -> String {
     let home = std::env::var("HOME").unwrap_or_default();
     let folder = folder_selection::parent(path);
-    let folder = if !home.is_empty() {
-        folder.strip_prefix(&home).unwrap_or(folder)
-    } else {
-        folder
-    };
-    folder
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
+    let folder = if !home.is_empty() { folder.strip_prefix(&home).unwrap_or(folder) } else { folder };
+    folder.split('/').filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" ")
 }
 
 fn with_slash(root: &str) -> String {
-    if root.ends_with('/') {
-        root.to_string()
-    } else {
-        format!("{root}/")
-    }
+    if root.ends_with('/') { root.to_string() } else { format!("{root}/") }
 }
 
 /// Everything that starts with `root` + "/", as a range on the path index.
@@ -661,33 +560,15 @@ mod tests {
     use super::*;
 
     fn candidate(path: &str, inode: u64) -> Candidate {
-        Candidate {
-            path: path.into(),
-            kind: FileKind::Doc,
-            size: 1,
-            mtime: 1.0,
-            inode,
-            device: 1,
-        }
+        Candidate { path: path.into(), kind: FileKind::Doc, size: 1, mtime: 1.0, inode, device: 1 }
     }
 
     #[test]
     fn files_under_nested_folders_come_once() {
         let dir = tempfile::tempdir().unwrap();
         let store = IndexStore::open_main(dir.path()).unwrap();
-        store
-            .insert(&Candidate {
-                kind: FileKind::Video,
-                ..candidate("/D/Media/Courses/a.mp4", 1)
-            })
-            .unwrap();
-        assert_eq!(
-            store
-                .files_under(&["/D".into(), "/D/Media/Courses".into()])
-                .unwrap()
-                .len(),
-            1
-        );
+        store.insert(&Candidate { kind: FileKind::Video, ..candidate("/D/Media/Courses/a.mp4", 1) }).unwrap();
+        assert_eq!(store.files_under(&["/D".into(), "/D/Media/Courses".into()]).unwrap().len(), 1);
     }
 
     #[test]
@@ -697,20 +578,9 @@ mod tests {
         let a = store.insert(&candidate("/A/notes.txt", 1)).unwrap();
         store.insert(&candidate("/B/plan.txt", 2)).unwrap();
         store
-            .add_segment(
-                a,
-                SegmentKind::Chunk,
-                Modality::Text,
-                Some(1.0),
-                None,
-                None,
-                Some("hello"),
-                Some(&[0.5; 768]),
-            )
+            .add_segment(a, SegmentKind::Chunk, Modality::Text, Some(1.0), None, None, Some("hello"), Some(&[0.5; 768]))
             .unwrap();
-        store
-            .finish(a, "done", None, &Info::from([("chars".into(), "5".into())]))
-            .unwrap();
+        store.finish(a, "done", None, &Info::from([("chars".into(), "5".into())])).unwrap();
         assert_eq!(store.pending(None, None, None).unwrap().len(), 1);
         store.set_scope(Some(vec!["/A".into()]));
         assert!(store.pending(None, None, None).unwrap().is_empty());

@@ -296,10 +296,7 @@ impl<'a> Indexer<'a> {
         on_event: &mut dyn FnMut(&Event),
     ) -> Result<BTreeMap<String, usize>> {
         let queue = self.store.pending(limit, only, Some(&self.kinds))?;
-        let jobs: Vec<Job> = batches(&queue)
-            .into_iter()
-            .map(|files| Job { files, step: None })
-            .collect();
+        let jobs: Vec<Job> = batches(&queue).into_iter().map(|files| Job { files, step: None }).collect();
         let mut states = BTreeMap::new();
         let mut done = 0;
         let total = queue.len();
@@ -338,26 +335,15 @@ impl<'a> Indexer<'a> {
         let mut jobs = Vec::new();
         for file in self.store.unfinished(Some(&self.kinds))? {
             let info = self.store.info(file.id)?;
-            let size = if file.kind == FileKind::Pdf {
-                self.options.pdf_step
-            } else {
-                self.options.doc_step
-            };
+            let size = if file.kind == FileKind::Pdf { self.options.pdf_step } else { self.options.doc_step };
             // Where it stopped (after the last page or chunk stored, should its info not say; nothing stored: the start).
             let mut start = match info.get("read_to").and_then(|value| value.parse().ok()) {
                 Some(start) => start,
                 None => self.store.last_place(file.id)?.unwrap_or(0),
             };
-            let end = info
-                .get("read_end")
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(0)
-                .max(start + 1);
+            let end = info.get("read_end").and_then(|value| value.parse().ok()).unwrap_or(0).max(start + 1);
             while start < end {
-                jobs.push(Job {
-                    files: vec![file.clone()],
-                    step: Some(start..(start + size).min(end)),
-                });
+                jobs.push(Job { files: vec![file.clone()], step: Some(start..(start + size).min(end)) });
                 start += size;
             }
         }
@@ -431,12 +417,7 @@ impl<'a> Indexer<'a> {
             let results = self.commit(prepared);
             let _ = std::fs::remove_dir_all(&folder);
             let results = results?;
-            committed(
-                index,
-                job,
-                &results,
-                started.elapsed().as_secs_f64() / job.files.len() as f64,
-            );
+            committed(index, job, &results, started.elapsed().as_secs_f64() / job.files.len() as f64);
         }
         // A job prepared for a run that stopped early: throw its files away.
         if let Some(handle) = ahead
@@ -470,10 +451,7 @@ impl<'a> Indexer<'a> {
             return Ok(());
         }
         let Some(reset) = self.reset_on_model_change.as_mut() else {
-            return Err(IndexError::FingerprintMismatch {
-                index: indexed,
-                now: fingerprint.to_string(),
-            });
+            return Err(IndexError::FingerprintMismatch { index: indexed, now: fingerprint.to_string() });
         };
         // Everything is queued again: a run that's under way goes on with its batch, and later runs take the rest.
         self.store.reset_all()?;
@@ -487,8 +465,7 @@ impl<'a> Indexer<'a> {
             let fingerprint = format!("{} | {}", started.info().vector_source(), self.options.fingerprint());
             self.adopt(&fingerprint)?;
             self.store.set_meta("fingerprint", Some(&fingerprint))?;
-            self.store
-                .set_meta("vector_source", Some(&started.info().vector_source()))?;
+            self.store.set_meta("vector_source", Some(&started.info().vector_source()))?;
             self.worker = Some(started);
         }
         Ok(self.worker.as_mut().unwrap())
@@ -497,13 +474,7 @@ impl<'a> Indexer<'a> {
     // Commit (this thread: the model and the database)
 
     fn commit(&mut self, prepared: Prepared) -> Result<Vec<Outcome>> {
-        let Prepared {
-            batch,
-            step,
-            outcomes,
-            payload,
-            ..
-        } = prepared;
+        let Prepared { batch, step, outcomes, payload, .. } = prepared;
         if let (Some(step), Some((_, detail))) = (&step, outcomes.get(&0)) {
             return Ok(vec![self.stop_reading(&batch[0], step.start, detail)?]);
         }
@@ -515,12 +486,9 @@ impl<'a> Indexer<'a> {
         let later = step.is_some();
         let outcome = match payload {
             Payload::Nothing => return Ok(results),
-            Payload::Doc {
-                chunks,
-                read,
-                total,
-                characters,
-            } => self.doc(&batch[0], &chunks, read, total, characters, later),
+            Payload::Doc { chunks, read, total, characters } => {
+                self.doc(&batch[0], &chunks, read, total, characters, later)
+            }
             Payload::Code(code) => self.code(&batch[0], &code),
             Payload::Images { screenshot, ready } => {
                 // Pictures come several to a job, and settle their own results.
@@ -528,8 +496,7 @@ impl<'a> Indexer<'a> {
                     Ok(()) => return Ok(results),
                     Err(IndexError::Database(error)) => {
                         for item in &ready {
-                            self.store
-                                .finish(batch[item.slot].id, "failed", Some(&error.to_string()), &Info::new())?;
+                            self.store.finish(batch[item.slot].id, "failed", Some(&error.to_string()), &Info::new())?;
                             results[item.slot] = ("failed".into(), Some(error.to_string()));
                         }
                         return Ok(results);
@@ -537,18 +504,9 @@ impl<'a> Indexer<'a> {
                     Err(error) => return Err(error),
                 }
             }
-            Payload::Pdf {
-                pages,
-                read,
-                total,
-                title,
-            } => self.pdf(&batch[0], &pages, read, total, title, later),
+            Payload::Pdf { pages, read, total, title } => self.pdf(&batch[0], &pages, read, total, title, later),
             Payload::Audio { pieces, duration } => self.audio(&batch[0], &pieces, duration),
-            Payload::Video {
-                frames,
-                sound,
-                duration,
-            } => self.video(&batch[0], &frames, &sound, duration),
+            Payload::Video { frames, sound, duration } => self.video(&batch[0], &frames, &sound, duration),
         };
         match outcome {
             Ok(outcome) => results[0] = outcome,
@@ -573,16 +531,8 @@ impl<'a> Indexer<'a> {
         info.remove("read_to");
         info.remove("read_end");
         let unit = if file.kind == FileKind::Pdf { "page" } else { "chunk" };
-        self.store.finish(
-            file.id,
-            "done",
-            Some(&format!("read to {unit} {place}, not after: {problem}")),
-            &info,
-        )?;
-        Ok((
-            "done".into(),
-            Some(format!("stopped before {unit} {}: {problem}", place + 1)),
-        ))
+        self.store.finish(file.id, "done", Some(&format!("read to {unit} {place}, not after: {problem}")), &info)?;
+        Ok(("done".into(), Some(format!("stopped before {unit} {}: {problem}", place + 1))))
     }
 
     /// Chunks `read` of a document (all of a short one, a step of a long one). A long one stays `partial` with
@@ -600,20 +550,14 @@ impl<'a> Indexer<'a> {
             self.store.finish(file.id, "skipped", Some("no text"), &Info::new())?;
             return Ok(("skipped".into(), Some("no text".into())));
         }
-        let title = Path::new(&file.path)
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or("")
-            .to_string();
+        let title = Path::new(&file.path).file_stem().and_then(|stem| stem.to_str()).unwrap_or("").to_string();
         // Text that's mostly digits (a data dump saved as .txt) gets keyword search only.
         let worded: Vec<usize> = (0..chunks.len()).filter(|index| has_words(&chunks[*index])).collect();
         let vectors = if worded.is_empty() {
             Vec::new()
         } else {
-            let texts: Vec<String> = worded
-                .iter()
-                .map(|index| prompts::document(Some(&title), &chunks[*index]))
-                .collect();
+            let texts: Vec<String> =
+                worded.iter().map(|index| prompts::document(Some(&title), &chunks[*index])).collect();
             self.full_worker()?.embed_texts(&texts)?
         };
         let vector: HashMap<usize, &Vec<f32>> = worded.iter().copied().zip(&vectors).collect();
@@ -632,10 +576,7 @@ impl<'a> Indexer<'a> {
                     vector.get(&offset).map(|vector| vector.as_slice()),
                 )?;
             }
-            let mut info = Info::from([
-                ("chunks".into(), end.to_string()),
-                ("chars".into(), characters.to_string()),
-            ]);
+            let mut info = Info::from([("chunks".into(), end.to_string()), ("chars".into(), characters.to_string())]);
             if unread {
                 info.insert("read_to".into(), read.end.to_string());
                 info.insert("read_end".into(), end.to_string());
@@ -647,12 +588,7 @@ impl<'a> Indexer<'a> {
             } else {
                 None
             };
-            self.store.finish(
-                file.id,
-                if unread { "partial" } else { "done" },
-                detail.as_deref(),
-                &info,
-            )
+            self.store.finish(file.id, if unread { "partial" } else { "done" }, detail.as_deref(), &info)
         })?;
         let span = if later {
             format!("chunks {}–{} of {end}", read.start + 1, read.end)
@@ -662,11 +598,7 @@ impl<'a> Indexer<'a> {
             format!("{} chunks", chunks.len())
         };
         let keywords_only = chunks.len() - worded.len();
-        let note = if keywords_only > 0 {
-            format!("{span}, {keywords_only} for keywords only")
-        } else {
-            span
-        };
+        let note = if keywords_only > 0 { format!("{span}, {keywords_only} for keywords only") } else { span };
         Ok((if unread { "partial" } else { "done" }.into(), Some(note)))
     }
 
@@ -678,24 +610,16 @@ impl<'a> Indexer<'a> {
             return Ok(("skipped".into(), Some("no code".into())));
         }
         // Lines that are mostly numbers and symbols (a table of constants) get keyword search only.
-        let worded: Vec<usize> = (0..code.pieces.len())
-            .filter(|index| has_words(&code.pieces[*index].text))
-            .collect();
+        let worded: Vec<usize> = (0..code.pieces.len()).filter(|index| has_words(&code.pieces[*index].text)).collect();
         let vectors = if worded.is_empty() {
             Vec::new()
         } else {
-            let texts: Vec<String> = worded
-                .iter()
-                .map(|index| prompts::document(Some(&code.title), &code.pieces[*index].text))
-                .collect();
+            let texts: Vec<String> =
+                worded.iter().map(|index| prompts::document(Some(&code.title), &code.pieces[*index].text)).collect();
             self.full_worker()?.embed_texts(&texts)?
         };
         let vector: HashMap<usize, &Vec<f32>> = worded.iter().copied().zip(&vectors).collect();
-        let kind = if code.cells.is_none() {
-            SegmentKind::Lines
-        } else {
-            SegmentKind::Cells
-        };
+        let kind = if code.cells.is_none() { SegmentKind::Lines } else { SegmentKind::Cells };
         self.store.transaction(|_| {
             for (offset, piece) in code.pieces.iter().enumerate() {
                 self.store.add_segment(
@@ -740,19 +664,14 @@ impl<'a> Indexer<'a> {
         if ready.is_empty() {
             return Ok(());
         }
-        let budget = if screenshot {
-            self.options.screenshot_budget
-        } else {
-            self.options.photo_budget
-        };
+        let budget = if screenshot { self.options.screenshot_budget } else { self.options.photo_budget };
         let paths: Vec<String> = ready.iter().map(|item| item.image.path.clone()).collect();
         let vectors = self.full_worker()?.embed_images(&paths, budget)?;
         self.store.transaction(|_| {
             for (item, embedding) in ready.iter().zip(&vectors) {
                 let file = &batch[item.slot];
                 let Some(vector) = &embedding.vector else {
-                    self.store
-                        .finish(file.id, "failed", embedding.error.as_deref(), &Info::new())?;
+                    self.store.finish(file.id, "failed", embedding.error.as_deref(), &Info::new())?;
                     results[item.slot] = ("failed".into(), embedding.error.clone());
                     continue;
                 };
@@ -817,11 +736,7 @@ impl<'a> Indexer<'a> {
             self.store.finish(file.id, "skipped", Some("no pages"), &Info::new())?;
             return Ok(("skipped".into(), Some("no pages".into())));
         }
-        let stem = Path::new(&file.path)
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or("")
-            .to_string();
+        let stem = Path::new(&file.path).file_stem().and_then(|stem| stem.to_str()).unwrap_or("").to_string();
         let title = title.unwrap_or(stem);
         let text_pages: Vec<&Page> = pages.iter().filter(|page| page.image_path.is_none()).collect();
         // A page that's mostly digits (a table, a data listing) gets keyword search only.
@@ -833,15 +748,9 @@ impl<'a> Indexer<'a> {
         if !word_pages.is_empty() || !image_pages.is_empty() {
             let budget = self.options.page_budget;
             let worker = self.full_worker()?;
-            let texts: Vec<String> = word_pages
-                .iter()
-                .map(|page| prompts::document(Some(&title), &cut(&page.text)))
-                .collect();
-            let vectors = if texts.is_empty() {
-                Vec::new()
-            } else {
-                worker.embed_texts(&texts)?
-            };
+            let texts: Vec<String> =
+                word_pages.iter().map(|page| prompts::document(Some(&title), &cut(&page.text))).collect();
+            let vectors = if texts.is_empty() { Vec::new() } else { worker.embed_texts(&texts)? };
             text_vectors = word_pages.iter().map(|page| page.number).zip(vectors).collect();
             let images: Vec<String> = image_pages.iter().filter_map(|page| page.image_path.clone()).collect();
             if !images.is_empty() {
@@ -879,9 +788,7 @@ impl<'a> Indexer<'a> {
                     None,
                     Some(&excerpt(&page.text, 240)),
                     Some(&page.text),
-                    text_vectors
-                        .get(&page.number)
-                        .map(|vector: &Vec<f32>| vector.as_slice()),
+                    text_vectors.get(&page.number).map(|vector: &Vec<f32>| vector.as_slice()),
                 )?;
             }
             for (page, embedding) in image_pages.iter().zip(&image_vectors) {
@@ -899,10 +806,7 @@ impl<'a> Indexer<'a> {
             }
             let mut info = if later { self.store.info(file.id)? } else { Info::new() };
             info.insert("pages".into(), total.to_string());
-            let scanned = info
-                .get("scanned_pages")
-                .and_then(|value| value.parse::<usize>().ok())
-                .unwrap_or(0);
+            let scanned = info.get("scanned_pages").and_then(|value| value.parse::<usize>().ok()).unwrap_or(0);
             info.insert("scanned_pages".into(), (scanned + image_pages.len()).to_string());
             if unread {
                 info.insert("read_to".into(), read.end.to_string());
@@ -918,12 +822,7 @@ impl<'a> Indexer<'a> {
             } else {
                 None
             };
-            self.store.finish(
-                file.id,
-                if unread { "partial" } else { "done" },
-                detail.as_deref(),
-                &info,
-            )
+            self.store.finish(file.id, if unread { "partial" } else { "done" }, detail.as_deref(), &info)
         })?;
         let ocr = pages.iter().filter(|page| page.ocr).count();
         let span = if later {
@@ -940,8 +839,7 @@ impl<'a> Indexer<'a> {
 
     fn audio(&mut self, file: &FileRecord, pieces: &[Piece], duration: f64) -> Result<Outcome> {
         if pieces.is_empty() {
-            self.store
-                .finish(file.id, "skipped", Some("silent or shorter than 2 s"), &Info::new())?;
+            self.store.finish(file.id, "skipped", Some("silent or shorter than 2 s"), &Info::new())?;
             return Ok(("skipped".into(), Some("silent or too short".into())));
         }
         let paths: Vec<String> = pieces.iter().map(|piece| piece.path.clone()).collect();
@@ -959,39 +857,23 @@ impl<'a> Indexer<'a> {
                     embedding.vector.as_deref(),
                 )?;
             }
-            self.store.finish(
-                file.id,
-                "done",
-                None,
-                &Info::from([("duration".into(), format!("{duration:.1}"))]),
-            )
+            self.store.finish(file.id, "done", None, &Info::from([("duration".into(), format!("{duration:.1}"))]))
         })?;
-        Ok((
-            "done".into(),
-            Some(format!("{} windows, {} s", pieces.len(), duration as i64)),
-        ))
+        Ok(("done".into(), Some(format!("{} windows, {} s", pieces.len(), duration as i64))))
     }
 
     fn video(&mut self, file: &FileRecord, frames: &[Piece], sound: &[Piece], duration: f64) -> Result<Outcome> {
         if frames.is_empty() && sound.is_empty() {
-            self.store
-                .finish(file.id, "skipped", Some("no frames or sound"), &Info::new())?;
+            self.store.finish(file.id, "skipped", Some("no frames or sound"), &Info::new())?;
             return Ok(("skipped".into(), Some("no frames or sound".into())));
         }
         let budget = self.options.frame_budget;
         let worker = self.full_worker()?;
         let frame_paths: Vec<String> = frames.iter().map(|piece| piece.path.clone()).collect();
-        let frame_vectors = if frame_paths.is_empty() {
-            Vec::new()
-        } else {
-            worker.embed_images(&frame_paths, budget)?
-        };
+        let frame_vectors =
+            if frame_paths.is_empty() { Vec::new() } else { worker.embed_images(&frame_paths, budget)? };
         let sound_paths: Vec<String> = sound.iter().map(|piece| piece.path.clone()).collect();
-        let sound_vectors = if sound_paths.is_empty() {
-            Vec::new()
-        } else {
-            worker.embed_audio(&sound_paths)?
-        };
+        let sound_vectors = if sound_paths.is_empty() { Vec::new() } else { worker.embed_audio(&sound_paths)? };
         self.store.transaction(|_| {
             for (pieces, vectors, kind, modality) in [
                 (frames, &frame_vectors, SegmentKind::Frame, Modality::Image),
@@ -1019,12 +901,7 @@ impl<'a> Indexer<'a> {
         })?;
         Ok((
             "done".into(),
-            Some(format!(
-                "{} frames, {} sound windows, {} s",
-                frames.len(),
-                sound.len(),
-                duration as i64
-            )),
+            Some(format!("{} frames, {} sound windows, {} s", frames.len(), sound.len(), duration as i64)),
         ))
     }
 }
@@ -1033,9 +910,7 @@ impl<'a> Indexer<'a> {
 fn scratch_folder() -> PathBuf {
     static INDEXERS: AtomicUsize = AtomicUsize::new(0);
     let number = INDEXERS.fetch_add(1, Ordering::Relaxed);
-    paths::scratch_root()
-        .join(format!("digger-{}", std::process::id()))
-        .join(format!("indexer-{number}"))
+    paths::scratch_root().join(format!("digger-{}", std::process::id())).join(format!("indexer-{number}"))
 }
 
 /// Pictures go to the model 8 at a time (of one kind); other files one by one.
@@ -1056,13 +931,8 @@ fn batches(queue: &[FileRecord]) -> Vec<Vec<FileRecord>> {
 fn prepare(job: Job, options: &IndexOptions, folder: &Path) -> Prepared {
     let Job { files: batch, step } = job;
     let _ = std::fs::create_dir_all(folder);
-    let mut prepared = Prepared {
-        batch,
-        folder: folder.to_path_buf(),
-        step,
-        outcomes: HashMap::new(),
-        payload: Payload::Nothing,
-    };
+    let mut prepared =
+        Prepared { batch, folder: folder.to_path_buf(), step, outcomes: HashMap::new(), payload: Payload::Nothing };
     let path = PathBuf::from(&prepared.batch[0].path);
     let read = match prepared.batch[0].kind {
         FileKind::Doc => extract::doc_text(&path).map(|text| {
@@ -1087,11 +957,7 @@ fn prepare(job: Job, options: &IndexOptions, folder: &Path) -> Prepared {
                 let max_pixel = if screenshot { 1536 } else { 1024 };
                 match images::prepare(source, max_pixel, options.min_image_side, &out, screenshot) {
                     Ok(image) => {
-                        let ocr = if screenshot {
-                            images::ocr::text(source, folder)
-                        } else {
-                            String::new()
-                        };
+                        let ocr = if screenshot { images::ocr::text(source, folder) } else { String::new() };
                         ready.push(ReadyImage { slot, image, ocr });
                     }
                     Err(error @ (ExtractError::TooSmall(..) | ExtractError::LeftOut(_))) => {
@@ -1139,11 +1005,7 @@ fn prepare(job: Job, options: &IndexOptions, folder: &Path) -> Prepared {
                 } else {
                     Vec::new()
                 };
-                Ok(Payload::Video {
-                    frames,
-                    sound,
-                    duration,
-                })
+                Ok(Payload::Video { frames, sound, duration })
             })
         }
     };
@@ -1154,10 +1016,7 @@ fn prepare(job: Job, options: &IndexOptions, folder: &Path) -> Prepared {
         }
         Err(error) => {
             for slot in 0..prepared.batch.len() {
-                prepared
-                    .outcomes
-                    .entry(slot)
-                    .or_insert(("failed".into(), error.to_string()));
+                prepared.outcomes.entry(slot).or_insert(("failed".into(), error.to_string()));
             }
         }
     }
@@ -1220,14 +1079,8 @@ mod tests {
                 .iter()
                 .zip(vectors)
                 .map(|(path, vector)| match Path::new(path).exists() {
-                    true => Embedding {
-                        vector: Some(vector),
-                        error: None,
-                    },
-                    false => Embedding {
-                        vector: None,
-                        error: Some(format!("no file {path}")),
-                    },
+                    true => Embedding { vector: Some(vector), error: None },
+                    false => Embedding { vector: None, error: Some(format!("no file {path}")) },
                 })
                 .collect())
         }
@@ -1243,10 +1096,7 @@ mod tests {
                 dim: 768,
                 text_only: false,
             };
-            Ok(Box::new(FakeEmbedder {
-                info,
-                texts: texts.clone(),
-            }) as Box<dyn Embedder>)
+            Ok(Box::new(FakeEmbedder { info, texts: texts.clone() }) as Box<dyn Embedder>)
         })
     }
 
@@ -1257,9 +1107,7 @@ mod tests {
     }
 
     fn function(name: &str, body: usize) -> String {
-        let lines: Vec<String> = (1..=body)
-            .map(|n| format!("    let v{n} = \"{}\"", "x".repeat(40)))
-            .collect();
+        let lines: Vec<String> = (1..=body).map(|n| format!("    let v{n} = \"{}\"", "x".repeat(40))).collect();
         format!("func {name}() {{\n{}\n}}\n", lines.join("\n"))
     }
 
@@ -1271,25 +1119,13 @@ mod tests {
         write(
             root,
             "billing/retry.swift",
-            &[
-                function("retryWithBackoff", 22),
-                function("circuit", 22),
-                function("other", 22),
-            ]
-            .join("\n"),
+            &[function("retryWithBackoff", 22), function("circuit", 22), function("other", 22)].join("\n"),
         );
-        write(
-            root,
-            "billing/gen_pb2.py",
-            "# Generated by the protocol buffer compiler.  DO NOT EDIT!\nx = 1\n",
-        );
+        write(root, "billing/gen_pb2.py", "# Generated by the protocol buffer compiler.  DO NOT EDIT!\nx = 1\n");
         let index = root.join("index");
         let store = IndexStore::open(&index, IndexStore::CODE_FILE).unwrap();
         let texts = Rc::new(Cell::new(0));
-        let options = IndexOptions {
-            code: true,
-            ..Default::default()
-        };
+        let options = IndexOptions { code: true, ..Default::default() };
         let mut indexer = Indexer::new(&store, options, fake(texts.clone()));
         indexer.sync(&[root.join("billing")]).unwrap();
         let states = indexer.run(None, None, &mut || false, &mut |_| {}).unwrap();
@@ -1306,34 +1142,18 @@ mod tests {
         assert_eq!(texts.get(), 3);
         let file = store.files_under(&[crawler::standardized(root)]).unwrap();
         let retry = file.iter().find(|file| file.path.ends_with("retry.swift")).unwrap();
-        assert_eq!(
-            store.info(retry.id).unwrap().get("lines").map(String::as_str),
-            Some("74")
-        );
+        assert_eq!(store.info(retry.id).unwrap().get("lines").map(String::as_str), Some("74"));
         let mut searcher = Searcher::new(&store, true).unwrap();
-        let hits = searcher
-            .search("retryWithBackoff", None, &SearchOptions::default())
-            .unwrap();
-        assert_eq!(
-            (hits[0].segment, hits[0].loc, hits[0].loc_end),
-            (SegmentKind::Lines, Some(1.0), Some(24.0))
-        );
-        assert!(
-            IndexStore::open_main(&index)
-                .unwrap()
-                .files_under(&[crawler::standardized(root)])
-                .unwrap()
-                .is_empty()
-        );
+        let hits = searcher.search("retryWithBackoff", None, &SearchOptions::default()).unwrap();
+        assert_eq!((hits[0].segment, hits[0].loc, hits[0].loc_end), (SegmentKind::Lines, Some(1.0), Some(24.0)));
+        assert!(IndexStore::open_main(&index).unwrap().files_under(&[crawler::standardized(root)]).unwrap().is_empty());
     }
 
     #[test]
     fn a_name_looked_up_points_at_its_definition() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let calls: Vec<String> = (1..=30)
-            .map(|n| format!("    refreshAccessToken()  // call {n} of many"))
-            .collect();
+        let calls: Vec<String> = (1..=30).map(|n| format!("    refreshAccessToken()  // call {n} of many")).collect();
         let text = format!(
             "func run() {{\n{}\n}}\n\nfunc refreshAccessToken() -> String {{\n    return \"token\"\n}}\n",
             calls.join("\n")
@@ -1341,21 +1161,12 @@ mod tests {
         write(root, "app/.git/HEAD", "ref: refs/heads/main\n");
         write(root, "app/Auth.swift", &text);
         let store = IndexStore::open(&root.join("index"), IndexStore::CODE_FILE).unwrap();
-        let mut indexer = Indexer::new(
-            &store,
-            IndexOptions {
-                code: true,
-                ..Default::default()
-            },
-            fake(Rc::new(Cell::new(0))),
-        );
+        let mut indexer =
+            Indexer::new(&store, IndexOptions { code: true, ..Default::default() }, fake(Rc::new(Cell::new(0))));
         indexer.sync(&[root.join("app")]).unwrap();
         indexer.run(None, None, &mut || false, &mut |_| {}).unwrap();
         let mut searcher = Searcher::new(&store, true).unwrap();
-        let hit = searcher
-            .search("refreshAccessToken", None, &SearchOptions::default())
-            .unwrap()
-            .remove(0);
+        let hit = searcher.search("refreshAccessToken", None, &SearchOptions::default()).unwrap().remove(0);
         assert_eq!(hit.segment, SegmentKind::Lines);
         assert_eq!(hit.focus, Some(34.0)); // the line that defines it, in the stretch that holds it
         assert!(hit.loc.unwrap() <= 34.0 && hit.loc_end.unwrap() >= 34.0);
@@ -1379,9 +1190,7 @@ mod tests {
         assert_eq!(files, 1);
         assert!(left > 10, "{left}");
         let mut steps = Vec::new();
-        let finished = indexer
-            .finish_long_files(&mut || false, &mut |step| steps.push(step.clone()))
-            .unwrap();
+        let finished = indexer.finish_long_files(&mut || false, &mut |step| steps.push(step.clone())).unwrap();
         assert_eq!(finished, BTreeMap::from([("done".into(), 1)]));
         assert_eq!(steps.last().unwrap().files, 0);
         assert_eq!(store.unfinished_count().unwrap().0, 0);
@@ -1413,10 +1222,7 @@ mod tests {
         indexer.run(None, None, &mut || false, &mut |_| {}).unwrap();
         let mut other = Indexer::new(&store, IndexOptions::default(), fake(Rc::new(Cell::new(0))));
         other.embedder_source = Some("another model".into());
-        assert!(matches!(
-            other.check_model(),
-            Err(IndexError::FingerprintMismatch { .. })
-        ));
+        assert!(matches!(other.check_model(), Err(IndexError::FingerprintMismatch { .. })));
     }
 
     #[test]
@@ -1434,31 +1240,14 @@ mod tests {
         // A photo, an icon (too small), a screenshot of an error, a PDF with a text page and a blank one, a
         // recording with a tone, and a video.
         let photo = image::RgbImage::from_fn(1600, 1200, |x, y| image::Rgb([(x % 256) as u8, (y % 256) as u8, 90]));
-        image::DynamicImage::ImageRgb8(photo)
-            .save(root.join("IMG_0001.jpg"))
-            .unwrap();
-        image::DynamicImage::ImageRgb8(image::RgbImage::new(48, 48))
-            .save(root.join("icon.png"))
-            .unwrap();
+        image::DynamicImage::ImageRgb8(photo).save(root.join("IMG_0001.jpg")).unwrap();
+        image::DynamicImage::ImageRgb8(image::RgbImage::new(48, 48)).save(root.join("icon.png")).unwrap();
         let shot = dir.path().join("shot.pdf");
-        crate::pdf::write_test_pdf(
-            &shot,
-            &[vec!["Payment declined", "Error code K7Q2LM: the card has expired."]],
-        );
-        let page = crate::pdf::pages(&shot, |total| 0..total, 10_000, 1600, dir.path())
-            .unwrap()
-            .pages
-            .remove(0);
-        fs::copy(
-            page.image_path.unwrap(),
-            root.join("Screenshot 2026-10-11 at 21.00.00.png"),
-        )
-        .unwrap();
+        crate::pdf::write_test_pdf(&shot, &[vec!["Payment declined", "Error code K7Q2LM: the card has expired."]]);
+        let page = crate::pdf::pages(&shot, |total| 0..total, 10_000, 1600, dir.path()).unwrap().pages.remove(0);
+        fs::copy(page.image_path.unwrap(), root.join("Screenshot 2026-10-11 at 21.00.00.png")).unwrap();
         let clause = "Pets: one cat is allowed in the flat, but no dogs, birds or reptiles of any kind.";
-        crate::pdf::write_test_pdf(
-            &root.join("lease.pdf"),
-            &[vec!["Lease", clause, clause, clause], vec![]],
-        );
+        crate::pdf::write_test_pdf(&root.join("lease.pdf"), &[vec!["Lease", clause, clause, clause], vec![]]);
         let tone: Vec<i16> = (0..40 * media::SAMPLE_RATE)
             .map(|i| ((i as f64 * 440.0 * std::f64::consts::TAU / media::SAMPLE_RATE as f64).sin() * 8000.0) as i16)
             .collect();
@@ -1486,14 +1275,8 @@ mod tests {
         let mut indexer = Indexer::new(&store, IndexOptions::default(), fake(Rc::new(Cell::new(0))));
         indexer.sync(std::slice::from_ref(&root)).unwrap();
         let mut events = Vec::new();
-        let states = indexer
-            .run(None, None, &mut || false, &mut |event| events.push(event.clone()))
-            .unwrap();
-        assert_eq!(
-            states,
-            BTreeMap::from([("done".into(), 5), ("skipped".into(), 1)]),
-            "{events:#?}"
-        );
+        let states = indexer.run(None, None, &mut || false, &mut |event| events.push(event.clone())).unwrap();
+        assert_eq!(states, BTreeMap::from([("done".into(), 5), ("skipped".into(), 1)]), "{events:#?}");
         let kind = |name: &str| events.iter().find(|event| event.path.ends_with(name)).unwrap();
         assert_eq!(kind("icon.png").state, "skipped");
         assert_eq!(kind("Screenshot 2026-10-11 at 21.00.00.png").kind, FileKind::Screenshot);
@@ -1506,10 +1289,7 @@ mod tests {
         assert_eq!((lease[0].segment, lease[0].loc), (SegmentKind::Page, Some(1.0)));
         // The blank page went to the model as a picture; the recording and the video as windows and frames.
         let count = |sql: &str| store.db.query_row(sql, [], |row| row.get::<_, i64>(0)).unwrap();
-        assert_eq!(
-            count("SELECT COUNT(*) FROM segments WHERE kind = 'page_image' AND vec IS NOT NULL"),
-            1
-        );
+        assert_eq!(count("SELECT COUNT(*) FROM segments WHERE kind = 'page_image' AND vec IS NOT NULL"), 1);
         assert_eq!(
             count(
                 "SELECT COUNT(*) FROM segments WHERE kind = 'audio' AND file = (SELECT id FROM files WHERE path LIKE '%talk.wav')"
@@ -1525,10 +1305,7 @@ mod tests {
         );
         let photo = store.files_under(&[crate::crawler::standardized(&root)]).unwrap();
         let photo = photo.iter().find(|file| file.path.ends_with("IMG_0001.jpg")).unwrap();
-        assert_eq!(
-            store.info(photo.id).unwrap().get("width").map(String::as_str),
-            Some("1600")
-        );
+        assert_eq!(store.info(photo.id).unwrap().get("width").map(String::as_str), Some("1600"));
         // Nothing is left in the scratch folder.
         let scratch = indexer.scratch.clone();
         drop(indexer);

@@ -21,16 +21,8 @@ pub enum Classification {
 }
 
 /// Folders never worth walking into. Hidden folders are skipped by the crawler itself.
-const SKIPPED_FOLDER_NAMES: &[&str] = &[
-    "node_modules",
-    "bower_components",
-    "venv",
-    "site-packages",
-    "__pycache__",
-    "DerivedData",
-    "Pods",
-    "Carthage",
-];
+const SKIPPED_FOLDER_NAMES: &[&str] =
+    &["node_modules", "bower_components", "venv", "site-packages", "__pycache__", "DerivedData", "Pods", "Carthage"];
 
 /// Any of these in a folder makes it a code project, where only screenshots are indexed.
 const PROJECT_MARKERS: &[&str] = &[
@@ -52,9 +44,7 @@ const PROJECT_MARKERS: &[&str] = &[
 ];
 const PROJECT_BUNDLE_EXTENSIONS: &[&str] = &["xcodeproj", "xcworkspace"];
 
-const DOC_EXTENSIONS: &[&str] = &[
-    "txt", "text", "md", "markdown", "rtf", "docx", "doc", "odt", "html", "htm",
-];
+const DOC_EXTENSIONS: &[&str] = &["txt", "text", "md", "markdown", "rtf", "docx", "doc", "odt", "html", "htm"];
 
 /// Source code and data files: off by default (your editor and ripgrep search them better, and they flood an index).
 const CODE_EXTENSIONS: &[&str] = &[
@@ -72,22 +62,13 @@ const IMAGE_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "jpe", "png", "heic", "heif", "webp", "gif", "bmp", "tif", "tiff", "avif", "jxl", "dng", "cr2",
     "cr3", "nef", "arw", "orf", "rw2", "raf", "srw", "pef",
 ];
-const AUDIO_EXTENSIONS: &[&str] = &[
-    "mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus", "wma", "aiff", "aif", "amr", "caf",
-];
-const VIDEO_EXTENSIONS: &[&str] = &[
-    "mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "mpg", "mpeg", "3gp", "ogv", "vob",
-];
+const AUDIO_EXTENSIONS: &[&str] =
+    &["mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus", "wma", "aiff", "aif", "amr", "caf"];
+const VIDEO_EXTENSIONS: &[&str] =
+    &["mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "mpg", "mpeg", "3gp", "ogv", "vob"];
 
 /// Screenshot tools' names: macOS's, CleanShot's, GNOME's, KDE Spectacle's and hyprshot's (Omarchy).
-const SCREENSHOT_PREFIXES: &[&str] = &[
-    "Screenshot",
-    "Screen Shot",
-    "CleanShot",
-    "SCR-",
-    "screenshot",
-    "Skjermbilde",
-];
+const SCREENSHOT_PREFIXES: &[&str] = &["Screenshot", "Screen Shot", "CleanShot", "SCR-", "screenshot", "Skjermbilde"];
 const SCREENSHOT_MARKS: &[&str] = &["_hyprshot", "-hyprshot", "Screenshot_"];
 
 /// Source files code search reads.
@@ -148,10 +129,7 @@ const CODE_SKIPPED_FOLDER_NAMES: &[&str] = &[
 ];
 
 pub(crate) fn extension(path: &Path) -> String {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("")
-        .to_lowercase()
+    path.extension().and_then(|ext| ext.to_str()).unwrap_or("").to_lowercase()
 }
 
 fn file_name(path: &Path) -> &str {
@@ -173,10 +151,7 @@ pub fn classify_code(path: &Path, options: &IndexOptions) -> Classification {
     if lower.ends_with(".min.js") || lower.ends_with(".min.mjs") || lower.ends_with(".min.css") {
         return Classification::Skip("minified");
     }
-    if ["license", "licence", "copying", "notice"]
-        .iter()
-        .any(|prefix| lower.starts_with(prefix))
-    {
+    if ["license", "licence", "copying", "notice"].iter().any(|prefix| lower.starts_with(prefix)) {
         return Classification::Skip("license");
     }
     if (ext == "ts" || ext == "mts") && is_mpeg_transport_stream(path) {
@@ -260,11 +235,7 @@ pub fn classify(path: &Path, options: &IndexOptions) -> Classification {
     };
     // .ts / .mts are usually TypeScript. Only a real transport stream is video.
     if ext == "ts" || ext == "mts" || ext == "m2ts" {
-        return if is_mpeg_transport_stream(path) {
-            Classification::Index(FileKind::Video)
-        } else {
-            code
-        };
+        return if is_mpeg_transport_stream(path) { Classification::Index(FileKind::Video) } else { code };
     }
     let ext = ext.as_str();
     if DOC_EXTENSIONS.contains(&ext) {
@@ -277,11 +248,7 @@ pub fn classify(path: &Path, options: &IndexOptions) -> Classification {
         return Classification::Index(FileKind::Pdf);
     }
     if IMAGE_EXTENSIONS.contains(&ext) {
-        return Classification::Index(if is_screenshot(path) {
-            FileKind::Screenshot
-        } else {
-            FileKind::Image
-        });
+        return Classification::Index(if is_screenshot(path) { FileKind::Screenshot } else { FileKind::Image });
     }
     if VIDEO_EXTENSIONS.contains(&ext) {
         return Classification::Index(FileKind::Video);
@@ -322,10 +289,7 @@ pub(crate) fn skip_reason_for_folder(path: &str, home: &str, excluded: &[String]
     if path == format!("{home}/snap") {
         return Some("~/snap");
     }
-    if excluded
-        .iter()
-        .any(|skip| path == skip || path.starts_with(&format!("{skip}/")))
-    {
+    if excluded.iter().any(|skip| path == skip || path.starts_with(&format!("{skip}/"))) {
         return Some("excluded folder");
     }
     None
@@ -343,18 +307,8 @@ pub(crate) fn is_project_root(folder: &Path) -> bool {
     })
 }
 
-const CAMERA_PREFIXES: &[&str] = &[
-    "img",
-    "dsc",
-    "pxl",
-    "mvimg",
-    "vid",
-    "gopr",
-    "dji",
-    "photo",
-    "whatsapp",
-    "screenshot",
-];
+const CAMERA_PREFIXES: &[&str] =
+    &["img", "dsc", "pxl", "mvimg", "vid", "gopr", "dji", "photo", "whatsapp", "screenshot"];
 
 /// Machine-made names like "clip_000123", "frame-0042" or "3f9a1c0e-…", but not camera names like "IMG_1234".
 pub fn looks_machine_named(stem: &str) -> bool {
@@ -405,10 +359,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("app.ts");
         fs::write(&file, "export const x: number = 1;\n").unwrap();
-        assert_eq!(
-            classify(&file, &IndexOptions::default()),
-            Classification::Skip("code or data file")
-        );
+        assert_eq!(classify(&file, &IndexOptions::default()), Classification::Skip("code or data file"));
     }
 
     #[test]
@@ -420,47 +371,26 @@ mod tests {
         }
         let file = dir.path().join("clip.ts");
         fs::write(&file, bytes).unwrap();
-        assert_eq!(
-            classify(&file, &IndexOptions::default()),
-            Classification::Index(FileKind::Video)
-        );
+        assert_eq!(classify(&file, &IndexOptions::default()), Classification::Index(FileKind::Video));
     }
 
     #[test]
     fn code_can_be_included() {
-        let options = IndexOptions {
-            include_code: true,
-            ..Default::default()
-        };
-        assert_eq!(
-            classify(Path::new("/x/main.py"), &options),
-            Classification::Index(FileKind::Doc)
-        );
+        let options = IndexOptions { include_code: true, ..Default::default() };
+        assert_eq!(classify(Path::new("/x/main.py"), &options), Classification::Index(FileKind::Doc));
     }
 
     #[test]
     fn kinds_by_extension() {
         let options = IndexOptions::default();
-        assert_eq!(
-            classify(Path::new("/x/IMG_1.HEIC"), &options),
-            Classification::Index(FileKind::Image)
-        );
+        assert_eq!(classify(Path::new("/x/IMG_1.HEIC"), &options), Classification::Index(FileKind::Image));
         assert_eq!(
             classify(Path::new("/x/2026-10-11-123456_hyprshot.png"), &options),
             Classification::Index(FileKind::Screenshot)
         );
-        assert_eq!(
-            classify(Path::new("/x/talk.opus"), &options),
-            Classification::Index(FileKind::Audio)
-        );
-        assert_eq!(
-            classify(Path::new("/x/trip.mkv"), &options),
-            Classification::Index(FileKind::Video)
-        );
-        assert_eq!(
-            classify(Path::new("/x/lease.pdf"), &options),
-            Classification::Index(FileKind::Pdf)
-        );
+        assert_eq!(classify(Path::new("/x/talk.opus"), &options), Classification::Index(FileKind::Audio));
+        assert_eq!(classify(Path::new("/x/trip.mkv"), &options), Classification::Index(FileKind::Video));
+        assert_eq!(classify(Path::new("/x/lease.pdf"), &options), Classification::Index(FileKind::Pdf));
         assert_eq!(classify(Path::new("/x/a.zip"), &options), Classification::Ignore);
     }
 
@@ -482,21 +412,9 @@ mod tests {
         let photos: Vec<String> = (0..400).map(|n| format!("IMG_{}", 1000 + n)).collect();
         let few: Vec<String> = (0..50).map(|n| format!("clip_{n}")).collect();
         let mut files = Vec::new();
-        files.extend(clips.iter().map(|stem| DatasetFile {
-            folder: "/x/clips",
-            stem,
-            kind: FileKind::Audio,
-        }));
-        files.extend(photos.iter().map(|stem| DatasetFile {
-            folder: "/x/camera",
-            stem,
-            kind: FileKind::Image,
-        }));
-        files.extend(few.iter().map(|stem| DatasetFile {
-            folder: "/x/few",
-            stem,
-            kind: FileKind::Audio,
-        }));
+        files.extend(clips.iter().map(|stem| DatasetFile { folder: "/x/clips", stem, kind: FileKind::Audio }));
+        files.extend(photos.iter().map(|stem| DatasetFile { folder: "/x/camera", stem, kind: FileKind::Image }));
+        files.extend(few.iter().map(|stem| DatasetFile { folder: "/x/few", stem, kind: FileKind::Audio }));
         let datasets = dataset_folders(&files, &HashSet::new(), 300);
         assert_eq!(datasets, HashMap::from([("/x/clips".to_string(), 400)]));
     }
@@ -507,25 +425,10 @@ mod tests {
         assert!(is_secret(".env.local"));
         assert!(is_secret("server.PEM"));
         assert!(!is_secret("main.rs"));
-        let options = IndexOptions {
-            code: true,
-            ..Default::default()
-        };
-        assert_eq!(
-            classify_code(Path::new("/r/app.min.js"), &options),
-            Classification::Skip("minified")
-        );
-        assert_eq!(
-            classify_code(Path::new("/r/LICENSE"), &options),
-            Classification::Skip("license")
-        );
-        assert_eq!(
-            classify_code(Path::new("/r/data.json"), &options),
-            Classification::Skip("data file")
-        );
-        assert_eq!(
-            classify_code(Path::new("/r/PKGBUILD"), &options),
-            Classification::Index(FileKind::Code)
-        );
+        let options = IndexOptions { code: true, ..Default::default() };
+        assert_eq!(classify_code(Path::new("/r/app.min.js"), &options), Classification::Skip("minified"));
+        assert_eq!(classify_code(Path::new("/r/LICENSE"), &options), Classification::Skip("license"));
+        assert_eq!(classify_code(Path::new("/r/data.json"), &options), Classification::Skip("data file"));
+        assert_eq!(classify_code(Path::new("/r/PKGBUILD"), &options), Classification::Index(FileKind::Code));
     }
 }

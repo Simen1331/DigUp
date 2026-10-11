@@ -62,13 +62,7 @@ fn read_text(path: &Path) -> Result<String, ExtractError> {
             .as_chunks::<2>()
             .0
             .iter()
-            .map(|pair| {
-                if little {
-                    u16::from_le_bytes(*pair)
-                } else {
-                    u16::from_be_bytes(*pair)
-                }
-            })
+            .map(|pair| if little { u16::from_le_bytes(*pair) } else { u16::from_be_bytes(*pair) })
             .collect();
         String::from_utf16_lossy(&units)
     };
@@ -89,11 +83,7 @@ fn office_text(path: &Path, part: &str, paragraph: &str) -> Result<String, Extra
     let file = fs::File::open(path).map_err(unreadable)?;
     let mut archive = zip::ZipArchive::new(file).map_err(unreadable)?;
     let mut xml = String::new();
-    archive
-        .by_name(part)
-        .map_err(unreadable)?
-        .read_to_string(&mut xml)
-        .map_err(unreadable)?;
+    archive.by_name(part).map_err(unreadable)?.read_to_string(&mut xml).map_err(unreadable)?;
     let mut reader = quick_xml::Reader::from_str(&xml);
     let (mut text, mut depth) = (String::new(), 0usize);
     loop {
@@ -152,12 +142,7 @@ fn decode_entity(name: &str) -> String {
 /// Old Word files: antiword, then catdoc, whichever is installed.
 fn word97_text(path: &Path) -> Result<String, ExtractError> {
     for (tool, arguments) in [("antiword", vec!["-w", "0"]), ("catdoc", vec!["-w"])] {
-        let output = Command::new(tool)
-            .args(arguments)
-            .arg(path)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output();
+        let output = Command::new(tool).args(arguments).arg(path).stdin(Stdio::null()).stderr(Stdio::null()).output();
         if let Ok(output) = output
             && output.status.success()
         {
@@ -170,18 +155,8 @@ fn word97_text(path: &Path) -> Result<String, ExtractError> {
 /// Good enough for search: drops groups that hold no text (fonts, colours, pictures), control words and braces, and
 /// decodes \'hh and \uN characters.
 pub fn plain_text_from_rtf(rtf: &str) -> String {
-    const SKIPPED: &[&str] = &[
-        "fonttbl",
-        "colortbl",
-        "stylesheet",
-        "info",
-        "pict",
-        "header",
-        "footer",
-        "listtable",
-        "generator",
-        "*",
-    ];
+    const SKIPPED: &[&str] =
+        &["fonttbl", "colortbl", "stylesheet", "info", "pict", "header", "footer", "listtable", "generator", "*"];
     let chars: Vec<char> = rtf.chars().collect();
     let (mut out, mut i) = (String::new(), 0);
     let mut skip_depth: Option<usize> = None;
@@ -321,10 +296,7 @@ pub fn plain_text_from_html(html: &str) -> String {
                 Some(hex) => u32::from_str_radix(hex, 16).ok(),
                 None => code.parse().ok(),
             };
-            value
-                .and_then(char::from_u32)
-                .map(String::from)
-                .unwrap_or_else(|| " ".into())
+            value.and_then(char::from_u32).map(String::from).unwrap_or_else(|| " ".into())
         })
         .into_owned();
     text = SPACES.replace_all(&text, " ").into_owned();
@@ -388,19 +360,13 @@ mod tests {
         let html = "<html><head><title>T</title><style>p { color: red }</style></head>\n\
             <body><h1>Trip &amp; plans</h1><p>Fly to <b>Tokyo</b>&nbsp;on Friday.</p><script>var x = 1;</script>\n\
             <p>Caf&#233; &#x2014; ramen</p><!-- hidden --></body></html>";
-        assert_eq!(
-            plain_text_from_html(html),
-            "Trip & plans\nFly to Tokyo on Friday.\nCafé — ramen"
-        );
+        assert_eq!(plain_text_from_html(html), "Trip & plans\nFly to Tokyo on Friday.\nCafé — ramen");
     }
 
     #[test]
     fn rtf_becomes_plain_text() {
         let rtf = r"{\rtf1\ansi{\fonttbl\f0\fswiss Helvetica;}{\colortbl;\red255\green0\blue0;}\f0\pard Lease for the flat\par Pets: one cat allowed, caf\'e9 downstairs \u8212? no dogs.\par}";
-        assert_eq!(
-            plain_text_from_rtf(rtf),
-            "Lease for the flat\nPets: one cat allowed, café downstairs — no dogs."
-        );
+        assert_eq!(plain_text_from_rtf(rtf), "Lease for the flat\nPets: one cat allowed, café downstairs — no dogs.");
     }
 
     #[test]
@@ -408,9 +374,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("lease.docx");
         let mut writer = zip::ZipWriter::new(fs::File::create(&path).unwrap());
-        writer
-            .start_file("word/document.xml", zip::write::SimpleFileOptions::default())
-            .unwrap();
+        writer.start_file("word/document.xml", zip::write::SimpleFileOptions::default()).unwrap();
         std::io::Write::write_all(
             &mut writer,
             br#"<?xml version="1.0"?><w:document xmlns:w="x"><w:body><w:p><w:r><w:t>Pets &amp; cats</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">are </w:t></w:r><w:r><w:t>allowed</w:t></w:r></w:p></w:body></w:document>"#,

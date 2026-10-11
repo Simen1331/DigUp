@@ -11,11 +11,11 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::crawler::standardized;
+use crate::folder_selection::FolderSelection;
+use crate::model::IndexOptions;
+use crate::paths;
 use anyhow::{Context, Result};
-use digger_core::crawler::standardized;
-use digger_core::folder_selection::FolderSelection;
-use digger_core::model::IndexOptions;
-use digger_core::paths;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -44,6 +44,46 @@ pub struct Config {
     pub linger_seconds: f64,
     /// The index folder; empty: ~/.local/share/digger/index.
     pub index: String,
+    /// The big first pass waits in power-saver mode.
+    pub pause_in_power_saver: bool,
+    /// The languages Tesseract reads screenshots in ("eng", "nor"); empty: the installed ones Digger knows.
+    pub ocr_languages: Vec<String>,
+    /// How results open.
+    pub open: OpenSettings,
+    /// How the panel looks.
+    pub panel: PanelSettings,
+}
+
+/// The programs results open in: "auto" finds one; otherwise a command with {file}, {line}, {page}, {seconds} and
+/// {terminal} in it, or an editor's name for code ("nvim", "zed", "code"…).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OpenSettings {
+    pub code: String,
+    pub video: String,
+    pub audio: String,
+    pub pdf: String,
+}
+
+impl Default for OpenSettings {
+    fn default() -> Self {
+        OpenSettings { code: "auto".into(), video: "auto".into(), audio: "auto".into(), pdf: "auto".into() }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PanelSettings {
+    /// "omarchy": the colors of the current Omarchy theme; "gtk": the GTK theme's.
+    pub theme: String,
+    /// Empty: the same font as Walker (the system's monospace).
+    pub font: String,
+}
+
+impl Default for PanelSettings {
+    fn default() -> Self {
+        PanelSettings { theme: "omarchy".into(), font: String::new() }
+    }
 }
 
 impl Default for Config {
@@ -61,6 +101,10 @@ impl Default for Config {
             encoder_idle_seconds: 600.0,
             linger_seconds: 60.0,
             index: String::new(),
+            pause_in_power_saver: true,
+            ocr_languages: Vec::new(),
+            open: OpenSettings::default(),
+            panel: PanelSettings::default(),
         }
     }
 }
@@ -72,11 +116,7 @@ pub fn expand(path: &str) -> PathBuf {
         None if path == "~" => PathBuf::from(std::env::var_os("HOME").unwrap_or_default()),
         None => PathBuf::from(path),
     };
-    let path = if path.is_absolute() {
-        path
-    } else {
-        std::env::current_dir().unwrap_or_default().join(path)
-    };
+    let path = if path.is_absolute() { path } else { std::env::current_dir().unwrap_or_default().join(path) };
     PathBuf::from(standardized(&path))
 }
 
@@ -115,22 +155,12 @@ impl Config {
     }
 
     pub fn index_folder(&self) -> PathBuf {
-        if self.index.is_empty() {
-            paths::data_folder().join("index")
-        } else {
-            expand(&self.index)
-        }
+        if self.index.is_empty() { paths::data_folder().join("index") } else { expand(&self.index) }
     }
 
     fn selection(folders: &[String], skipped: &[String]) -> FolderSelection {
-        let folders: Vec<String> = folders
-            .iter()
-            .map(|path| expand(path).to_string_lossy().into_owned())
-            .collect();
-        let skipped: Vec<String> = skipped
-            .iter()
-            .map(|path| expand(path).to_string_lossy().into_owned())
-            .collect();
+        let folders: Vec<String> = folders.iter().map(|path| expand(path).to_string_lossy().into_owned()).collect();
+        let skipped: Vec<String> = skipped.iter().map(|path| expand(path).to_string_lossy().into_owned()).collect();
         let folders: Vec<&str> = folders.iter().map(String::as_str).collect();
         let skipped: Vec<&str> = skipped.iter().map(String::as_str).collect();
         FolderSelection::new(&folders, &skipped, &[])

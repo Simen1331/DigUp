@@ -61,9 +61,7 @@ pub fn hugging_face_snapshot() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HF_HOME").map(|home| PathBuf::from(home).join("hub")))
         .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".cache/huggingface/hub"));
-    hub.join(format!("models--{}", REPOSITORY.replace('/', "--")))
-        .join("snapshots")
-        .join(REVISION)
+    hub.join(format!("models--{}", REPOSITORY.replace('/', "--"))).join("snapshots").join(REVISION)
 }
 
 /// The folders to look in, first match wins. `$DIGGER_MODELS` is the only place looked at when it's set.
@@ -83,17 +81,10 @@ impl LlamaModels {
                 continue;
             }
             let media = folder.join(MEDIA.name);
-            return Ok(LlamaModels {
-                text,
-                media: media.exists().then_some(media),
-            });
+            return Ok(LlamaModels { text, media: media.exists().then_some(media) });
         }
         let looked: Vec<String> = folders().iter().map(|folder| folder.display().to_string()).collect();
-        Err(WorkerError::NotFound(format!(
-            "no {} in {}; get it with: digger download",
-            TEXT.name,
-            looked.join(", ")
-        )))
+        Err(WorkerError::NotFound(format!("no {} in {}; get it with: digger download", TEXT.name, looked.join(", "))))
     }
 
     /// Both files are there, so indexing can run (checked without loading anything).
@@ -104,9 +95,7 @@ impl LlamaModels {
 
 /// The files that aren't in `folder` yet. Only verified files get their final name, so being there is enough.
 pub fn missing(folder: &Path) -> Vec<ModelFile> {
-    ALL.into_iter()
-        .filter(|file| !folder.join(file.name).exists())
-        .collect()
+    ALL.into_iter().filter(|file| !folder.join(file.name).exists()).collect()
 }
 
 /// The SHA-256 of a file as lowercase hex.
@@ -127,9 +116,7 @@ pub fn sha256(path: &Path) -> std::io::Result<String> {
 /// The HTTP client for downloads. It trusts the system's certificates (what the browser trusts, a company proxy's
 /// included), not only the public roots built into the program.
 pub fn agent() -> ureq::Agent {
-    let tls = ureq::tls::TlsConfig::builder()
-        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
-        .build();
+    let tls = ureq::tls::TlsConfig::builder().root_certs(ureq::tls::RootCerts::PlatformVerifier).build();
     ureq::Agent::config_builder().tls_config(tls).build().new_agent()
 }
 
@@ -174,9 +161,7 @@ pub fn download(folder: &Path, progress: &mut dyn FnMut(&ModelFile, u64, u64)) -
             let mut body = response.into_body().into_reader();
             let mut buffer = vec![0u8; 1 << 20];
             loop {
-                let read = body
-                    .read(&mut buffer)
-                    .map_err(|error| format!("{}: {error}", file.name))?;
+                let read = body.read(&mut buffer).map_err(|error| format!("{}: {error}", file.name))?;
                 if read == 0 {
                     break;
                 }
@@ -188,12 +173,44 @@ pub fn download(folder: &Path, progress: &mut dyn FnMut(&ModelFile, u64, u64)) -
         let sum = sha256(&part).map_err(|error| error.to_string())?;
         if sum != file.sha256 {
             let _ = fs::remove_file(&part);
-            return Err(format!(
-                "{} didn't arrive whole (its checksum is {sum}); run it again",
-                file.name
-            ));
+            return Err(format!("{} didn't arrive whole (its checksum is {sum}); run it again", file.name));
         }
         fs::rename(&part, &target).map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+/// pdfium, the PDF library Chrome uses, from bblanchon/pdfium-binaries at the build pdfium-render speaks to, checked
+/// against its SHA-256, into Digger's data folder. Returns where it is. A copy from `$DIGGER_PDFIUM` or the system works
+/// too, without this.
+pub fn download_pdfium() -> Result<PathBuf, String> {
+    use digger_core::pdf;
+    let target = pdf::installed_library();
+    if target.exists() {
+        return Ok(target);
+    }
+    let url = format!(
+        "https://github.com/bblanchon/pdfium-binaries/releases/download/{}/{}",
+        pdf::PDFIUM_RELEASE.replace('/', "%2F"),
+        pdf::PDFIUM_ARCHIVE
+    );
+    let mut archive = Vec::new();
+    let response = agent().get(&url).call().map_err(|error| format!("pdfium: {error}"))?;
+    response.into_body().into_reader().read_to_end(&mut archive).map_err(|error| format!("pdfium: {error}"))?;
+    let sum: String = Sha256::digest(&archive).iter().map(|byte| format!("{byte:02x}")).collect();
+    if sum != pdf::PDFIUM_SHA256 {
+        return Err(format!("pdfium didn't arrive whole (its checksum is {sum}); try again"));
+    }
+    let mut entries = tar::Archive::new(flate2::read::GzDecoder::new(archive.as_slice()));
+    for entry in entries.entries().map_err(|error| error.to_string())? {
+        let mut entry = entry.map_err(|error| error.to_string())?;
+        if entry.path().map_err(|error| error.to_string())?.ends_with("lib/libpdfium.so") {
+            fs::create_dir_all(target.parent().unwrap()).map_err(|error| error.to_string())?;
+            let part = target.with_extension("so.part");
+            entry.unpack(&part).map_err(|error| error.to_string())?;
+            fs::rename(&part, &target).map_err(|error| error.to_string())?;
+            return Ok(target);
+        }
+    }
+    Err(format!("no libpdfium.so in {}", pdf::PDFIUM_ARCHIVE))
 }

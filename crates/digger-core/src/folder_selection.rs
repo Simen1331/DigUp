@@ -24,11 +24,7 @@ pub struct FolderSelection {
 impl FolderSelection {
     pub fn new(chosen: &[&str], skipped: &[&str], kept: &[&str]) -> FolderSelection {
         let own = |paths: &[&str]| unique(paths.iter().map(|path| path.to_string()).collect());
-        FolderSelection {
-            chosen: own(chosen),
-            skipped: own(skipped),
-            kept: own(kept),
-        }
+        FolderSelection { chosen: own(chosen), skipped: own(skipped), kept: own(kept) }
     }
 
     pub fn chosen(&self) -> &[String] {
@@ -51,9 +47,7 @@ impl FolderSelection {
     pub fn is_searched_in(path: &str, folders: &[String], skipped: &[String]) -> bool {
         folders.iter().any(|folder| {
             (path == folder || is_inside(path, folder))
-                && !skipped
-                    .iter()
-                    .any(|skip| is_inside(skip, folder) && (path == skip || is_inside(path, skip)))
+                && !skipped.iter().any(|skip| is_inside(skip, folder) && (path == skip || is_inside(path, skip)))
         })
     }
 
@@ -86,27 +80,16 @@ impl FolderSelection {
     /// The skips that leave something out (inside a folder that's searched).
     pub fn effective_skips(&self) -> Vec<String> {
         let folders = self.folders();
-        self.skipped
-            .iter()
-            .filter(|skip| folders.iter().any(|folder| is_inside(skip, folder)))
-            .cloned()
-            .collect()
+        self.skipped.iter().filter(|skip| folders.iter().any(|folder| is_inside(skip, folder))).cloned().collect()
     }
 
     /// A folder's checkbox: mixed when some of its subfolders are skipped (it's searched) or chosen (it isn't).
     pub fn mark(&self, folder: &str) -> Mark {
         if self.is_searched(folder) {
-            let partly = self
-                .skipped
-                .iter()
-                .any(|skip| parent(skip) == folder && !self.is_searched(skip));
+            let partly = self.skipped.iter().any(|skip| parent(skip) == folder && !self.is_searched(skip));
             return if partly { Mark::Mixed } else { Mark::On };
         }
-        if self.kept_and_chosen().iter().any(|path| parent(path) == folder) {
-            Mark::Mixed
-        } else {
-            Mark::Off
-        }
+        if self.kept_and_chosen().iter().any(|path| parent(path) == folder) { Mark::Mixed } else { Mark::Off }
     }
 
     /// Checks or unchecks a folder and its subfolders: all of it, or none of it.

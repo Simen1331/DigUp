@@ -46,12 +46,7 @@ pub fn probe(path: &Path) -> Result<Probe, ExtractError> {
         .output()
         .map_err(|_| ExtractError::Unreadable("ffmpeg isn't installed".into()))?;
     if !output.status.success() {
-        return Err(unreadable(
-            String::from_utf8_lossy(&output.stderr)
-                .lines()
-                .next()
-                .unwrap_or("ffprobe failed"),
-        ));
+        return Err(unreadable(String::from_utf8_lossy(&output.stderr).lines().next().unwrap_or("ffprobe failed")));
     }
     let mut probe = Probe::default();
     let mut kind = "";
@@ -99,10 +94,7 @@ pub fn audio_windows(path: &Path, window: f64, hop: f64, folder: &Path) -> Resul
         .spawn()
         .map_err(|_| ExtractError::Unreadable("ffmpeg isn't installed".into()))?;
     let mut stdout = child.stdout.take().unwrap();
-    let (window_samples, hop_samples) = (
-        (window * SAMPLE_RATE as f64) as usize,
-        (hop * SAMPLE_RATE as f64) as usize,
-    );
+    let (window_samples, hop_samples) = ((window * SAMPLE_RATE as f64) as usize, (hop * SAMPLE_RATE as f64) as usize);
     let mut buffer: Vec<i16> = Vec::new();
     let mut offset = 0usize; // sample index of buffer[0] in the file
     let mut pieces = Vec::new();
@@ -144,20 +136,15 @@ pub fn audio_windows(path: &Path, window: f64, hop: f64, folder: &Path) -> Resul
     if !status.success() {
         let mut error = String::new();
         let _ = child.stderr.take().map(|mut stderr| stderr.read_to_string(&mut error));
-        return Err(unreadable(
-            error.lines().next().unwrap_or("audio decoding failed").to_string(),
-        ));
+        return Err(unreadable(error.lines().next().unwrap_or("audio decoding failed").to_string()));
     }
     // The tail: new audio beyond the previous window's overlap, or the whole file if it was shorter than a window.
     let already_covered = if offset == 0 { 0 } else { window_samples - hop_samples };
     if buffer.len().saturating_sub(already_covered) >= (minimum * SAMPLE_RATE as f64) as usize {
         emit(&buffer, offset, &mut pieces)?;
     }
-    let duration = if probe.duration > 0.0 {
-        probe.duration
-    } else {
-        (offset + buffer.len()) as f64 / SAMPLE_RATE as f64
-    };
+    let duration =
+        if probe.duration > 0.0 { probe.duration } else { (offset + buffer.len()) as f64 / SAMPLE_RATE as f64 };
     Ok((pieces, duration))
 }
 
@@ -227,18 +214,11 @@ pub fn keyframes(
         .map_err(|_| ExtractError::Unreadable("ffmpeg isn't installed".into()))?;
     if !output.status.success() {
         return Err(unreadable(
-            String::from_utf8_lossy(&output.stderr)
-                .lines()
-                .next()
-                .unwrap_or("frame extraction failed")
-                .to_string(),
+            String::from_utf8_lossy(&output.stderr).lines().next().unwrap_or("frame extraction failed").to_string(),
         ));
     }
-    let mut files: Vec<_> = fs::read_dir(&frames_folder)
-        .map_err(unreadable)?
-        .flatten()
-        .map(|entry| entry.path())
-        .collect();
+    let mut files: Vec<_> =
+        fs::read_dir(&frames_folder).map_err(unreadable)?.flatten().map(|entry| entry.path()).collect();
     files.sort();
     let mut frames: Vec<Piece> = Vec::new();
     let mut last_hash: Option<u64> = None;
@@ -255,11 +235,7 @@ pub fn keyframes(
             continue;
         }
         last_hash = Some(hash);
-        frames.push(Piece {
-            path: file.to_string_lossy().into_owned(),
-            start: time,
-            end: probe.duration,
-        });
+        frames.push(Piece { path: file.to_string_lossy().into_owned(), start: time, end: probe.duration });
     }
     // Each kept frame stands for the stretch until the next kept frame.
     for index in 1..frames.len() {
@@ -273,10 +249,7 @@ mod tests {
     use super::*;
 
     fn have_ffmpeg() -> bool {
-        Command::new("ffmpeg")
-            .arg("-version")
-            .output()
-            .is_ok_and(|output| output.status.success())
+        Command::new("ffmpeg").arg("-version").output().is_ok_and(|output| output.status.success())
     }
 
     #[test]

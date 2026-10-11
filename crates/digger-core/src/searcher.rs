@@ -55,13 +55,7 @@ pub struct SearchOptions {
 
 impl Default for SearchOptions {
     fn default() -> Self {
-        SearchOptions {
-            kinds: None,
-            limit: 20,
-            z_gate: 2.0,
-            word_weight: None,
-            prefix_last: false,
-        }
+        SearchOptions { kinds: None, limit: 20, z_gate: 2.0, word_weight: None, prefix_last: false }
     }
 }
 
@@ -121,12 +115,8 @@ impl<'a> Searcher<'a> {
     pub fn reload(&mut self) -> Result<()> {
         self.release_vectors();
         self.reload_files()?;
-        let rows: i64 = self
-            .store
-            .db
-            .query_row("SELECT COUNT(*) FROM segments WHERE vec IS NOT NULL", [], |row| {
-                row.get(0)
-            })?;
+        let rows: i64 =
+            self.store.db.query_row("SELECT COUNT(*) FROM segments WHERE vec IS NOT NULL", [], |row| row.get(0))?;
         let mut matrix = VectorStorage::new(rows as usize);
         let steps = IndexOptions::default();
         let mut statement = self.store.db.prepare(
@@ -182,17 +172,12 @@ impl<'a> Searcher<'a> {
         query_vector: Option<&[f32]>,
         options: &SearchOptions,
     ) -> Result<Vec<SearchHit>> {
-        let word_weight = options
-            .word_weight
-            .unwrap_or(if self.is_code() { CODE_WORD_WEIGHT } else { WORD_WEIGHT });
+        let word_weight = options.word_weight.unwrap_or(if self.is_code() { CODE_WORD_WEIGHT } else { WORD_WEIGHT });
         if query_vector.is_some() && !self.vectors_loaded {
             self.reload()?;
         }
         let allowed = |file: i64, kinds: &HashMap<i64, FileKind>| {
-            options
-                .kinds
-                .as_ref()
-                .is_none_or(|wanted| kinds.get(&file).is_some_and(|kind| wanted.contains(kind)))
+            options.kinds.as_ref().is_none_or(|wanted| kinds.get(&file).is_some_and(|kind| wanted.contains(kind)))
         };
 
         // Meaning: score every vector on this query's scale (`meaning`), keep each file's best segment.
@@ -239,17 +224,14 @@ impl<'a> Searcher<'a> {
                 }
                 // Text that normalizing changed is quoted as it's written (with its hamza, harakat, joiners).
                 let original: Option<String> = row.get(3)?;
-                let snippet = original
-                    .and_then(|original| search_text::snippet(&original, &terms, 12))
-                    .or(row.get::<_, Option<String>>(2)?);
+                let snippet =
+                    original
+                        .and_then(|original| search_text::snippet(&original, &terms, 12))
+                        .or(row.get::<_, Option<String>>(2)?);
                 words.push((file, row.get(1)?, snippet));
             }
             if !words.is_empty() {
-                let files = words
-                    .iter()
-                    .map(|word| word.0.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",");
+                let files = words.iter().map(|word| word.0.to_string()).collect::<Vec<_>>().join(",");
                 let mut statement = self.store.db.prepare(&format!(
                     "SELECT DISTINCT s.file FROM fts JOIN segments s ON s.id = fts.rowid
                     WHERE fts MATCH ? AND s.file IN ({files})"
@@ -266,23 +248,11 @@ impl<'a> Searcher<'a> {
         // A file qualifies by standing out in meaning, or by containing at least half of the query's words. Score:
         // meaning z + a bonus that grows with word coverage, + 1 for the kind the query asks for.
         let is_lookup = is_lookup(&terms) || identifier.is_some();
-        let (meaning_weight, words_weight) = if is_lookup {
-            (0.5, word_weight * 2.0)
-        } else {
-            (1.0, word_weight)
-        };
+        let (meaning_weight, words_weight) = if is_lookup { (0.5, word_weight * 2.0) } else { (1.0, word_weight) };
         let hinted = kind_hints(text);
-        let mut candidates: HashSet<i64> = best
-            .iter()
-            .filter(|(_, found)| found.0 >= options.z_gate)
-            .map(|(file, _)| *file)
-            .collect();
-        candidates.extend(
-            coverage
-                .iter()
-                .filter(|(_, share)| **share >= 0.5)
-                .map(|(file, _)| *file),
-        );
+        let mut candidates: HashSet<i64> =
+            best.iter().filter(|(_, found)| found.0 >= options.z_gate).map(|(file, _)| *file).collect();
+        candidates.extend(coverage.iter().filter(|(_, share)| **share >= 0.5).map(|(file, _)| *file));
         let mut scored: Vec<(i64, f64)> = candidates
             .into_iter()
             .map(|file| {
@@ -321,18 +291,18 @@ impl<'a> Searcher<'a> {
                 let looked_up = if rank < 10 { identifier.as_deref() } else { None };
                 (segment_id, focus) = self.code_place(file, segment_id, looked_up, text, &terms, words_here)?;
             }
-            let (path, kind, modified, size, info): (String, String, f64, i64, Option<String>) =
-                self.store.db.query_row(
-                    "SELECT path, kind, mtime, size, info FROM files WHERE id = ?",
-                    [file],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-                )?;
-            let (segment, loc, loc_end, stored_excerpt): (String, Option<f64>, Option<f64>, Option<String>) =
-                self.store.db.query_row(
-                    "SELECT kind, loc, loc_end, excerpt FROM segments WHERE id = ?",
-                    [segment_id],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                )?;
+            let (path, kind, modified, size, info): (String, String, f64, i64, Option<String>) = self
+                .store
+                .db
+                .query_row("SELECT path, kind, mtime, size, info FROM files WHERE id = ?", [file], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+                })?;
+            let (segment, loc, loc_end, stored_excerpt): (String, Option<f64>, Option<f64>, Option<String>) = self
+                .store
+                .db
+                .query_row("SELECT kind, loc, loc_end, excerpt FROM segments WHERE id = ?", [segment_id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                })?;
             // Quote the matched words only when they come from the segment we point at, so a PDF hit on page 5 never
             // shows page 2's words. A segment with no place and no text of its own (a screenshot's image vector) can
             // borrow them from its file's OCR text, which describes the same picture.
@@ -370,9 +340,7 @@ impl<'a> Searcher<'a> {
                 excerpt: snippet.or(stored_excerpt),
                 modified,
                 size,
-                info: info
-                    .and_then(|json| serde_json::from_str(&json).ok())
-                    .unwrap_or_default(),
+                info: info.and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default(),
                 focus,
             });
         }
@@ -426,19 +394,10 @@ impl<'a> Searcher<'a> {
         let first: f64 = self
             .store
             .db
-            .query_row("SELECT loc FROM segments WHERE id = ?", [segment], |row| {
-                row.get::<_, Option<f64>>(0)
-            })?
+            .query_row("SELECT loc FROM segments WHERE id = ?", [segment], |row| row.get::<_, Option<f64>>(0))?
             .unwrap_or(1.0);
-        let words = if identifier.is_none() {
-            terms.to_vec()
-        } else {
-            vec![name.to_lowercase()]
-        };
-        Ok((
-            segment,
-            lookup::first_line(&words, &text, first as usize).map(|line| line as f64),
-        ))
+        let words = if identifier.is_none() { terms.to_vec() } else { vec![name.to_lowercase()] };
+        Ok((segment, lookup::first_line(&words, &text, first as usize).map(|line| line as f64)))
     }
 
     /// The text of a page, a document's passage or a screenshot's OCR, as it's written.
@@ -446,11 +405,7 @@ impl<'a> Searcher<'a> {
         Ok(self
             .store
             .db
-            .query_row(
-                "SELECT coalesce(original, body) FROM fts WHERE rowid = ?",
-                [id],
-                |row| row.get(0),
-            )
+            .query_row("SELECT coalesce(original, body) FROM fts WHERE rowid = ?", [id], |row| row.get(0))
             .optional()?
             .flatten())
     }
@@ -479,11 +434,7 @@ pub fn strong_count(hits: &[SearchHit], ratio: f64) -> usize {
 pub fn meaning(scores: &[f32], modality: &[Modality], sets_scale: Option<&[bool]>) -> Vec<f64> {
     let counts = |row: usize| sets_scale.is_none_or(|sets| sets[row]);
     let means = modality_means(scores, modality, sets_scale);
-    let centered: Vec<f64> = scores
-        .iter()
-        .zip(modality)
-        .map(|(score, kind)| *score as f64 - means[kind])
-        .collect();
+    let centered: Vec<f64> = scores.iter().zip(modality).map(|(score, kind)| *score as f64 - means[kind]).collect();
     let (mut count, mut sum) = (0.0, 0.0);
     for (row, value) in centered.iter().enumerate() {
         if counts(row) {
@@ -492,12 +443,8 @@ pub fn meaning(scores: &[f32], modality: &[Modality], sets_scale: Option<&[bool]
         }
     }
     let mean = sum / f64::max(count, 1.0);
-    let squares: f64 = centered
-        .iter()
-        .enumerate()
-        .filter(|(row, _)| counts(*row))
-        .map(|(_, value)| (value - mean).powi(2))
-        .sum();
+    let squares: f64 =
+        centered.iter().enumerate().filter(|(row, _)| counts(*row)).map(|(_, value)| (value - mean).powi(2)).sum();
     let deviation = (squares / f64::max(count, 1.0)).sqrt().max(0.02);
     centered.iter().map(|value| (value - mean) / deviation).collect()
 }
@@ -656,11 +603,7 @@ pub fn patterns(terms: &[String], prefix_last: bool) -> Vec<String> {
 /// The query's words as an FTS5 OR-query.
 pub fn fts_query(text: &str, prefix_last: bool) -> Option<String> {
     let words = terms(text);
-    if words.is_empty() {
-        None
-    } else {
-        Some(patterns(&words, prefix_last).join(" OR "))
-    }
+    if words.is_empty() { None } else { Some(patterns(&words, prefix_last).join(" OR ")) }
 }
 
 static KIND_WORDS: LazyLock<Vec<(&'static str, FileKind)>> = LazyLock::new(|| {
@@ -718,18 +661,12 @@ pub fn kind_hints(text: &str) -> HashSet<FileKind> {
     words_of(text)
         .iter()
         .filter_map(|word| {
-            KIND_WORDS
-                .iter()
-                .find(|(key, _)| key == word)
-                .map(|(_, kind)| *kind)
-                .or_else(|| {
-                    KIND_WORDS
-                        .iter()
-                        .find(|(key, _)| {
-                            search_text::inflects(key) && key.chars().count() >= 3 && word.starts_with(key)
-                        })
-                        .map(|(_, kind)| *kind)
-                })
+            KIND_WORDS.iter().find(|(key, _)| key == word).map(|(_, kind)| *kind).or_else(|| {
+                KIND_WORDS
+                    .iter()
+                    .find(|(key, _)| search_text::inflects(key) && key.chars().count() >= 3 && word.starts_with(key))
+                    .map(|(_, kind)| *kind)
+            })
         })
         .collect()
 }
@@ -742,25 +679,16 @@ mod tests {
     #[test]
     fn query_words_of_languages_with_endings_are_prefixes() {
         assert_eq!(fts_query("কুমির", false).as_deref(), Some("\"কুমির\"*"));
-        assert_eq!(
-            fts_query("مدرسة الأطفال", false).as_deref(),
-            Some("\"مدرسة\"* OR \"الاطفال\"*")
-        );
+        assert_eq!(fts_query("مدرسة الأطفال", false).as_deref(), Some("\"مدرسة\"* OR \"الاطفال\"*"));
         assert_eq!(fts_query("মা", false).as_deref(), Some("\"মা\"*"));
-        assert_eq!(
-            fts_query("payment error", false).as_deref(),
-            Some("\"payment\" OR \"error\"")
-        );
+        assert_eq!(fts_query("payment error", false).as_deref(), Some("\"payment\" OR \"error\""));
         assert_eq!(kind_hints("জেব্রার ভিডিওতে"), HashSet::from([FileKind::Video]));
         assert_eq!(kind_hints("صورة حمار وحشي"), HashSet::from([FileKind::Image]));
     }
 
     #[test]
     fn fts_query_drops_stopwords_and_kind_words() {
-        assert_eq!(
-            fts_query("the screenshot of my payment error", false).as_deref(),
-            Some("\"payment\" OR \"error\"")
-        );
+        assert_eq!(fts_query("the screenshot of my payment error", false).as_deref(), Some("\"payment\" OR \"error\""));
         assert_eq!(fts_query("zebr", true).as_deref(), Some("\"zebr\"*"));
         assert_eq!(fts_query("a screenshot", false), None);
     }
@@ -780,30 +708,12 @@ mod tests {
             })
             .unwrap();
         let text = "সুন্দরবনে আমরা কুমিরও দেখেছি। قَالَ إِنَّ الْمَكْتَبَةَ تُغْلَقُ";
-        store
-            .add_segment(
-                id,
-                SegmentKind::Chunk,
-                Modality::Text,
-                Some(1.0),
-                None,
-                None,
-                Some(text),
-                None,
-            )
-            .unwrap();
+        store.add_segment(id, SegmentKind::Chunk, Modality::Text, Some(1.0), None, None, Some(text), None).unwrap();
         let mut searcher = Searcher::new(&store, false).unwrap();
         let options = SearchOptions::default();
         let bengali = searcher.search("কুমির", None, &options).unwrap();
-        assert_eq!(
-            bengali.iter().map(|hit| hit.path.as_str()).collect::<Vec<_>>(),
-            ["/notes/trip.txt"]
-        );
-        assert!(
-            bengali[0].excerpt.as_deref().unwrap().contains("«কুমিরও»"),
-            "{:?}",
-            bengali[0].excerpt
-        );
+        assert_eq!(bengali.iter().map(|hit| hit.path.as_str()).collect::<Vec<_>>(), ["/notes/trip.txt"]);
+        assert!(bengali[0].excerpt.as_deref().unwrap().contains("«কুমিরও»"), "{:?}", bengali[0].excerpt);
         assert_eq!(searcher.search("المكتبة", None, &options).unwrap().len(), 1);
         assert!(searcher.search("কলকাতা", None, &options).unwrap().is_empty());
     }
@@ -832,11 +742,8 @@ mod tests {
         let book: Vec<f32> = (0..400).map(|i| 0.60 + (i % 5) as f32 * 0.004).chain([0.80]).collect();
         let z = meaning(&scores, &modality, None);
         let sets = [vec![true; 60], vec![false; 401]].concat();
-        let with_book = meaning(
-            &[scores.clone(), book].concat(),
-            &[modality, vec![Modality::Text; 401]].concat(),
-            Some(&sets),
-        );
+        let with_book =
+            meaning(&[scores.clone(), book].concat(), &[modality, vec![Modality::Text; 401]].concat(), Some(&sets));
         for row in 0..60 {
             assert!((z[row] - with_book[row]).abs() < 1e-9);
         }

@@ -1,2 +1,3 @@
-# The same line length as the Swift code.
+# The same line length as the Swift code, used fully.
 max_width = 120
+use_small_heuristics = "Max"

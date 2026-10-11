@@ -86,12 +86,7 @@ pub fn pages(
         let Ok(page) = document.pages().get(index as i32) else {
             continue;
         };
-        let mut text = page
-            .text()
-            .map(|text| text.all())
-            .unwrap_or_default()
-            .trim()
-            .to_string();
+        let mut text = page.text().map(|text| text.all()).unwrap_or_default().trim().to_string();
         let mut garbled = None;
         match PageTextProblem::check(&text) {
             Some(PageTextProblem::LostLetters) => {
@@ -102,37 +97,19 @@ pub fn pages(
                     let read = images::ocr::image_text(&image, folder, &format!("page-{index}-ocr"));
                     let arabic = read.chars().any(|c| (0x0600..0x0700).contains(&(c as u32)));
                     if read.chars().count() >= min_text && PageTextProblem::check(&read).is_none() && arabic {
-                        pages.push(Page {
-                            number: index + 1,
-                            text: read,
-                            image_path: None,
-                            ocr: true,
-                            garbled: None,
-                        });
+                        pages.push(Page { number: index + 1, text: read, image_path: None, ocr: true, garbled: None });
                         continue;
                     }
                 }
                 if text.chars().count() >= min_text {
-                    pages.push(Page {
-                        number: index + 1,
-                        text,
-                        image_path: None,
-                        ocr: false,
-                        garbled: None,
-                    });
+                    pages.push(Page { number: index + 1, text, image_path: None, ocr: false, garbled: None });
                     continue;
                 }
             }
             Some(PageTextProblem::GlyphOrder) => garbled = Some(std::mem::take(&mut text)),
             None => {
                 if text.chars().count() >= min_text {
-                    pages.push(Page {
-                        number: index + 1,
-                        text,
-                        image_path: None,
-                        ocr: false,
-                        garbled: None,
-                    });
+                    pages.push(Page { number: index + 1, text, image_path: None, ocr: false, garbled: None });
                     continue;
                 }
             }
@@ -173,11 +150,7 @@ fn render(page: &PdfPage, pixels: u32) -> Option<image::DynamicImage> {
 pub fn texts(path: &Path) -> Result<Vec<String>, ExtractError> {
     let pdfium = pdfium().ok_or_else(|| ExtractError::Unreadable("pdfium isn't installed".into()))?;
     let document = pdfium.load_pdf_from_file(path, None).map_err(unreadable)?;
-    Ok(document
-        .pages()
-        .iter()
-        .map(|page| page.text().map(|text| text.all()).unwrap_or_default())
-        .collect())
+    Ok(document.pages().iter().map(|page| page.text().map(|text| text.all()).unwrap_or_default()).collect())
 }
 
 /// A small PDF of `pages` (each a list of lines; an empty page is blank), in Helvetica, for tests.
@@ -192,10 +165,7 @@ pub fn write_test_pdf(path: &Path, pages: &[Vec<&str>]) {
     for (index, lines) in pages.iter().enumerate() {
         let mut stream = String::from("BT /F1 12 Tf 50 750 Td 14 TL\n");
         for line in lines {
-            stream += &format!(
-                "({}) Tj T*\n",
-                line.replace('\\', "\\\\").replace('(', "\\(").replace(')', "\\)")
-            );
+            stream += &format!("({}) Tj T*\n", line.replace('\\', "\\\\").replace('(', "\\(").replace(')', "\\)"));
         }
         stream += "ET";
         objects.push(format!(
@@ -215,10 +185,7 @@ pub fn write_test_pdf(path: &Path, pages: &[Vec<&str>]) {
     for offset in offsets {
         out += &format!("{offset:010} 00000 n \n");
     }
-    out += &format!(
-        "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
-        objects.len() + 1
-    );
+    out += &format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1);
     std::fs::write(path, out).unwrap();
 }
 
@@ -239,11 +206,7 @@ mod tests {
         let read = pages(&pdf, |total| 0..total, 200, 1400, dir.path()).unwrap();
         assert_eq!(read.total, 2);
         assert_eq!(read.pages.len(), 2);
-        assert!(
-            read.pages[0].text.contains("one cat is allowed"),
-            "{:?}",
-            read.pages[0].text
-        );
+        assert!(read.pages[0].text.contains("one cat is allowed"), "{:?}", read.pages[0].text);
         assert!(read.pages[0].image_path.is_none());
         let rendered = read.pages[1].image_path.as_ref().unwrap();
         let (width, height) = image::image_dimensions(rendered).unwrap();

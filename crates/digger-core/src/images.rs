@@ -73,14 +73,10 @@ pub fn decode(path: &Path) -> Result<DynamicImage, ExtractError> {
 /// The camera's DateTimeOriginal, when the file has one.
 pub fn taken(path: &Path) -> Option<String> {
     let file = fs::File::open(path).ok()?;
-    let exif = exif::Reader::new()
-        .read_from_container(&mut BufReader::new(file))
-        .ok()?;
+    let exif = exif::Reader::new().read_from_container(&mut BufReader::new(file)).ok()?;
     let field = exif.get_field(exif::Tag::DateTimeOriginal, exif::In::PRIMARY)?;
     match &field.value {
-        exif::Value::Ascii(parts) => parts
-            .first()
-            .map(|bytes| String::from_utf8_lossy(bytes).trim().to_string()),
+        exif::Value::Ascii(parts) => parts.first().map(|bytes| String::from_utf8_lossy(bytes).trim().to_string()),
         _ => None,
     }
 }
@@ -95,12 +91,7 @@ pub fn prepare(path: &Path, max_pixel: u32, min_side: u32, out: &Path, png: bool
     let image = decode(path)?;
     let image = fit(image, max_pixel);
     write(&image, out, png)?;
-    Ok(Prepared {
-        path: out.to_string_lossy().into_owned(),
-        width,
-        height,
-        taken: taken(path),
-    })
+    Ok(Prepared { path: out.to_string_lossy().into_owned(), width, height, taken: taken(path) })
 }
 
 /// `image` scaled down (never up) to fit a square of `side`.
@@ -127,11 +118,7 @@ pub fn average_hash(image: &DynamicImage) -> u64 {
     let small = image.resize_exact(8, 8, FilterType::Triangle).to_luma8();
     let pixels = small.as_raw();
     let mean = pixels.iter().map(|pixel| *pixel as u32).sum::<u32>() / pixels.len() as u32;
-    pixels
-        .iter()
-        .enumerate()
-        .filter(|(_, pixel)| **pixel as u32 > mean)
-        .fold(0, |hash, (index, _)| hash | 1 << index)
+    pixels.iter().enumerate().filter(|(_, pixel)| **pixel as u32 > mean).fold(0, |hash, (index, _)| hash | 1 << index)
 }
 
 /// The words in a picture, by Tesseract: what keyword search matches codes, names and error messages in screenshots
@@ -148,11 +135,7 @@ pub mod ocr {
         static LANGUAGES: OnceLock<Option<String>> = OnceLock::new();
         LANGUAGES
             .get_or_init(|| {
-                let output = Command::new("tesseract")
-                    .arg("--list-langs")
-                    .stderr(Stdio::null())
-                    .output()
-                    .ok()?;
+                let output = Command::new("tesseract").arg("--list-langs").stderr(Stdio::null()).output().ok()?;
                 let installed: Vec<String> = String::from_utf8_lossy(&output.stdout)
                     .lines()
                     .skip(1)
@@ -186,10 +169,8 @@ pub mod ocr {
         let Some(languages) = languages() else {
             return String::new();
         };
-        let readable = matches!(
-            extension(path).as_str(),
-            "png" | "jpg" | "jpeg" | "tif" | "tiff" | "bmp" | "gif" | "webp"
-        );
+        let readable =
+            matches!(extension(path).as_str(), "png" | "jpg" | "jpeg" | "tif" | "tiff" | "bmp" | "gif" | "webp");
         let mut converted: Option<PathBuf> = None;
         if !readable {
             let Ok(image) = decode(path) else { return String::new() };
@@ -255,9 +236,7 @@ mod heif {
 
     pub fn decode(path: &Path) -> Result<DynamicImage, ExtractError> {
         let handle = context(path)?.primary_image_handle().map_err(unreadable)?;
-        let decoded = LibHeif::new()
-            .decode(&handle, ColorSpace::Rgb(RgbChroma::Rgb), None)
-            .map_err(unreadable)?;
+        let decoded = LibHeif::new().decode(&handle, ColorSpace::Rgb(RgbChroma::Rgb), None).map_err(unreadable)?;
         let plane = decoded.planes().interleaved.ok_or_else(|| unreadable("no pixels"))?;
         let (width, height) = (plane.width, plane.height);
         let mut pixels = Vec::with_capacity((width * height * 3) as usize);
@@ -275,15 +254,11 @@ mod heif {
     use super::*;
 
     pub fn dimensions(_: &Path) -> Result<(u32, u32), ExtractError> {
-        Err(ExtractError::LeftOut(
-            "this Digger was built without HEIC support".into(),
-        ))
+        Err(ExtractError::LeftOut("this Digger was built without HEIC support".into()))
     }
 
     pub fn decode(_: &Path) -> Result<DynamicImage, ExtractError> {
-        Err(ExtractError::LeftOut(
-            "this Digger was built without HEIC support".into(),
-        ))
+        Err(ExtractError::LeftOut("this Digger was built without HEIC support".into()))
     }
 }
 
@@ -305,14 +280,8 @@ mod tests {
         assert_eq!(image::image_dimensions(&out).unwrap(), (1024, 512));
         let icon = dir.path().join("icon.png");
         DynamicImage::ImageRgb8(RgbImage::new(64, 64)).save(&icon).unwrap();
-        assert_eq!(
-            prepare(&icon, 1024, 256, &out, true).unwrap_err(),
-            ExtractError::TooSmall(64, 64)
-        );
-        assert!(matches!(
-            decode(Path::new("/x/photo.NEF")),
-            Err(ExtractError::LeftOut(_))
-        ));
+        assert_eq!(prepare(&icon, 1024, 256, &out, true).unwrap_err(), ExtractError::TooSmall(64, 64));
+        assert!(matches!(decode(Path::new("/x/photo.NEF")), Err(ExtractError::LeftOut(_))));
     }
 
     #[test]
@@ -339,14 +308,8 @@ mod tests {
         // A page of text rendered as a picture: what a screenshot of an error message is.
         let dir = tempfile::tempdir().unwrap();
         let pdf = dir.path().join("error.pdf");
-        crate::pdf::write_test_pdf(
-            &pdf,
-            &[vec!["Payment declined", "Error code K7Q2LM: the card has expired."]],
-        );
-        let page = crate::pdf::pages(&pdf, |total| 0..total, 10_000, 2000, dir.path())
-            .unwrap()
-            .pages
-            .remove(0);
+        crate::pdf::write_test_pdf(&pdf, &[vec!["Payment declined", "Error code K7Q2LM: the card has expired."]]);
+        let page = crate::pdf::pages(&pdf, |total| 0..total, 10_000, 2000, dir.path()).unwrap().pages.remove(0);
         let text = ocr::text(Path::new(page.image_path.as_ref().unwrap()), dir.path());
         assert!(text.contains("Payment declined"), "{text}");
         assert!(text.contains("K7Q2LM"), "{text}");

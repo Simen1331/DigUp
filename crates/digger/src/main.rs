@@ -12,21 +12,16 @@ use digger_core::indexer::Indexer;
 use digger_core::model::SegmentKind;
 use digger_core::model::{FileKind, IndexOptions, code_query, prompts};
 use digger_core::pdf;
+use digger_core::proto::{self as protocol, Client, Request};
 use digger_core::searcher::{SearchHit, SearchOptions, Searcher, strong_count};
+use digger_core::settings as config;
 use digger_core::store::IndexStore;
 use digger_embed::{LlamaEmbedder, LlamaModels, llama, models};
-use protocol::{Client, Request};
 
-mod config;
 mod daemon;
-mod protocol;
 
 #[derive(Parser)]
-#[command(
-    name = "digger",
-    version,
-    about = "Search your files by what's in them, with EmbeddingGemma 2"
-)]
+#[command(name = "digger", version, about = "Search your files by what's in them, with EmbeddingGemma 2")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -146,18 +141,11 @@ struct Tuning {
 
 impl IndexArgs {
     fn folder(&self) -> PathBuf {
-        self.index
-            .clone()
-            .map(|path| absolute(&path))
-            .unwrap_or_else(|| models::data_folder().join("index"))
+        self.index.clone().map(|path| absolute(&path)).unwrap_or_else(|| models::data_folder().join("index"))
     }
 
     fn store(&self) -> Result<IndexStore> {
-        let name = if self.code {
-            IndexStore::CODE_FILE
-        } else {
-            IndexStore::MAIN_FILE
-        };
+        let name = if self.code { IndexStore::CODE_FILE } else { IndexStore::MAIN_FILE };
         IndexStore::open(&self.folder(), name)
             .with_context(|| format!("can't open the index in {}", self.folder().display()))
     }
@@ -188,11 +176,7 @@ fn absolute(path: &Path) -> PathBuf {
         Some(rest) => PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(rest),
         None => path.to_path_buf(),
     };
-    if path.is_absolute() {
-        path
-    } else {
-        std::env::current_dir().unwrap_or_default().join(path)
-    }
+    if path.is_absolute() { path } else { std::env::current_dir().unwrap_or_default().join(path) }
 }
 
 fn main() {
@@ -222,25 +206,11 @@ fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         Command::Download => download(),
-        Command::Index {
-            folders,
-            index,
-            limit,
-            reindex,
-        } => index_folders(&folders, &index, limit, reindex),
-        Command::Search {
-            words,
-            index,
-            tuning,
-            kind,
-            n,
-            json,
-        } => search(&words.join(" "), &index, &tuning, &kind, n, json),
-        Command::Status {
-            index,
-            waybar: true,
-            follow,
-        } => waybar(&index, follow),
+        Command::Index { folders, index, limit, reindex } => index_folders(&folders, &index, limit, reindex),
+        Command::Search { words, index, tuning, kind, n, json } => {
+            search(&words.join(" "), &index, &tuning, &kind, n, json)
+        }
+        Command::Status { index, waybar: true, follow } => waybar(&index, follow),
         Command::Status { index, .. } => status(&index),
         Command::Daemon => daemon::run(),
         Command::Add { folders, code } => change_folders(&folders, code, true),
@@ -283,11 +253,7 @@ fn clock(seconds: f64) -> String {
 
 fn location(hit: &SearchHit) -> String {
     let Some(loc) = hit.loc else {
-        return if hit.segment == SegmentKind::Ocr {
-            "text in image".into()
-        } else {
-            String::new()
-        };
+        return if hit.segment == SegmentKind::Ocr { "text in image".into() } else { String::new() };
     };
     let end = hit.loc_end.unwrap_or(loc);
     match hit.segment {
@@ -296,10 +262,7 @@ fn location(hit: &SearchHit) -> String {
         SegmentKind::Frame => format!("at {}", clock(loc)),
         SegmentKind::Chunk => format!("part {}", loc as i64),
         SegmentKind::Lines => {
-            let opens = hit
-                .focus
-                .map(|line| format!(", opens at {}", line as i64))
-                .unwrap_or_default();
+            let opens = hit.focus.map(|line| format!(", opens at {}", line as i64)).unwrap_or_default();
             format!("lines {}–{}{opens}", loc as i64, end as i64)
         }
         SegmentKind::Cells if loc == end => format!("cell {}", loc as i64),
@@ -311,19 +274,11 @@ fn location(hit: &SearchHit) -> String {
 fn counted(map: &BTreeMap<String, usize>) -> String {
     let mut entries: Vec<_> = map.iter().collect();
     entries.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
-    entries
-        .iter()
-        .map(|(reason, count)| format!("{count} {reason}"))
-        .collect::<Vec<_>>()
-        .join(" · ")
+    entries.iter().map(|(reason, count)| format!("{count} {reason}")).collect::<Vec<_>>().join(" · ")
 }
 
 fn states_line(states: &BTreeMap<String, usize>) -> String {
-    states
-        .iter()
-        .map(|(state, count)| format!("{count} {state}"))
-        .collect::<Vec<_>>()
-        .join(" · ")
+    states.iter().map(|(state, count)| format!("{count} {state}")).collect::<Vec<_>>().join(" · ")
 }
 
 // Commands
@@ -348,11 +303,7 @@ fn download() -> Result<()> {
     download_pdfium()?;
     for (tool, package, what) in [
         ("ffmpeg", "ffmpeg", "recordings and videos"),
-        (
-            "tesseract",
-            "tesseract tesseract-data-eng tesseract-data-nor",
-            "the words in screenshots",
-        ),
+        ("tesseract", "tesseract tesseract-data-eng tesseract-data-nor", "the words in screenshots"),
     ] {
         if !have(tool) {
             println!("for {what}, install {tool}: sudo pacman -S {package}");
@@ -388,46 +339,13 @@ fn have(tool: &str) -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
-/// pdfium, the PDF library Chrome uses, from bblanchon/pdfium-binaries at the build pdfium-render speaks to, checked
-/// against its SHA-256. A copy from `$DIGGER_PDFIUM` or the system works too.
 fn download_pdfium() -> Result<()> {
-    use sha2::Digest;
-    let target = pdf::installed_library();
-    if target.exists() {
-        println!("pdfium is in {}", target.display());
-        return Ok(());
+    if !pdf::installed_library().exists() {
+        eprintln!("downloading pdfium ({})", pdf::PDFIUM_RELEASE);
     }
-    let url = format!(
-        "https://github.com/bblanchon/pdfium-binaries/releases/download/{}/{}",
-        pdf::PDFIUM_RELEASE.replace('/', "%2F"),
-        pdf::PDFIUM_ARCHIVE
-    );
-    eprintln!("downloading pdfium ({})", pdf::PDFIUM_RELEASE);
-    let mut archive = Vec::new();
-    std::io::Read::read_to_end(
-        &mut models::agent().get(&url).call()?.into_body().into_reader(),
-        &mut archive,
-    )?;
-    let sum: String = sha2::Sha256::digest(&archive)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    if sum != pdf::PDFIUM_SHA256 {
-        bail!("pdfium didn't arrive whole (its checksum is {sum}); run it again");
-    }
-    let mut entries = tar::Archive::new(flate2::read::GzDecoder::new(archive.as_slice()));
-    for entry in entries.entries()? {
-        let mut entry = entry?;
-        if entry.path()?.ends_with("lib/libpdfium.so") {
-            std::fs::create_dir_all(target.parent().unwrap())?;
-            let part = target.with_extension("so.part");
-            entry.unpack(&part)?;
-            std::fs::rename(&part, &target)?;
-            println!("pdfium is in {}", target.display());
-            return Ok(());
-        }
-    }
-    bail!("no libpdfium.so in {}", pdf::PDFIUM_ARCHIVE)
+    let target = models::download_pdfium().map_err(anyhow::Error::msg)?;
+    println!("pdfium is in {}", target.display());
+    Ok(())
 }
 
 /// The embedder for indexing: the whole model, with its log in the index folder.
@@ -457,11 +375,7 @@ fn index_folders(folders: &[PathBuf], args: &IndexArgs, limit: Option<usize>, re
     if reindex {
         store.reset_all()?;
     }
-    let mut indexer = Indexer::new(
-        &store,
-        args.options(),
-        make_embedder(store.directory.join("worker.log")),
-    );
+    let mut indexer = Indexer::new(&store, args.options(), make_embedder(store.directory.join("worker.log")));
     indexer.embedder_source = Some(llama::model_info(false).vector_source());
     indexer.check_model()?;
     let sync = indexer.sync(&roots)?;
@@ -489,11 +403,7 @@ fn index_folders(folders: &[PathBuf], args: &IndexArgs, limit: Option<usize>, re
     let started = Instant::now();
     let states = indexer.run(limit, None, &mut || false, &mut |event| {
         let name = event.path.rsplit('/').next().unwrap_or(&event.path);
-        let note = event
-            .note
-            .as_ref()
-            .map(|note| format!("  ({note})"))
-            .unwrap_or_default();
+        let note = event.note.as_ref().map(|note| format!("  ({note})")).unwrap_or_default();
         println!(
             "[{:>4}/{}] {:<10} {:<7} {:5.2}s  {name}{note}",
             event.done,
@@ -506,11 +416,7 @@ fn index_folders(folders: &[PathBuf], args: &IndexArgs, limit: Option<usize>, re
     if states.is_empty() {
         println!("nothing pending");
     } else {
-        println!(
-            "done in {}: {}",
-            duration(started.elapsed().as_secs_f64()),
-            states_line(&states)
-        );
+        println!("done in {}: {}", duration(started.elapsed().as_secs_f64()), states_line(&states));
     }
     // The rest of long files, once nothing is pending (not after a --limit run: things still are).
     if limit.is_some() || store.unfinished_count()?.0 == 0 {
@@ -529,15 +435,8 @@ fn index_folders(folders: &[PathBuf], args: &IndexArgs, limit: Option<usize>, re
             step.seconds
         );
     })?;
-    let finished = if finished.is_empty() {
-        "none finished".into()
-    } else {
-        states_line(&finished)
-    };
-    println!(
-        "the rest of long files in {}: {finished}",
-        duration(started.elapsed().as_secs_f64())
-    );
+    let finished = if finished.is_empty() { "none finished".into() } else { states_line(&finished) };
+    println!("the rest of long files in {}: {finished}", duration(started.elapsed().as_secs_f64()));
     Ok(())
 }
 
@@ -556,10 +455,7 @@ fn query_vectors(
     if let Some(source) = &searcher.vector_source
         && *source != encoder.info().vector_source()
     {
-        bail!(
-            "index vectors come from {source} but the query encoder is {}",
-            encoder.info().vector_source()
-        );
+        bail!("index vectors come from {source} but the query encoder is {}", encoder.info().vector_source());
     }
     let prompt = if code { prompts::code_query } else { prompts::query };
     let texts: Vec<String> = queries.iter().map(|query| prompt(query)).collect();
@@ -580,25 +476,18 @@ fn search(query: &str, args: &IndexArgs, tuning: &Tuning, kinds: &[FileKind], n:
     let plain = args.index.is_none() && tuning.zgate == 2.0 && tuning.word_weight.is_none();
     if plain && let Some(mut client) = Client::connect() {
         let request = Request::Search {
-            query: code
-                .as_ref()
-                .map(|code| format!("code: {code}"))
-                .unwrap_or_else(|| query.clone()),
+            query: code.as_ref().map(|code| format!("code: {code}")).unwrap_or_else(|| query.clone()),
             limit: n,
             kinds: kinds.iter().map(|kind| kind.as_str().to_string()).collect(),
             prefix_last: false,
             words_only: false,
+            seq: None,
         };
         let response = client.send(&request)?;
         if !response.ok {
             bail!(response.error.unwrap_or_default());
         }
-        let hits: Vec<SearchHit> = response
-            .hits
-            .unwrap_or_default()
-            .iter()
-            .map(protocol::Hit::to_search_hit)
-            .collect();
+        let hits: Vec<SearchHit> = response.hits.unwrap_or_default().iter().map(protocol::Hit::to_search_hit).collect();
         let footer = format!(
             "({} vectors · search by the daemon {:.0} ms)",
             response.vectors.unwrap_or(0),
@@ -606,22 +495,14 @@ fn search(query: &str, args: &IndexArgs, tuning: &Tuning, kinds: &[FileKind], n:
         );
         return print_hits(&hits, json, &footer);
     }
-    let store = IndexArgs {
-        code: code.is_some(),
-        ..args.clone()
-    }
-    .store()?;
+    let store = IndexArgs { code: code.is_some(), ..args.clone() }.store()?;
     let mut searcher = Searcher::new(&store, true)?;
     let started = Instant::now();
     let vector =
         query_vectors(std::slice::from_ref(&query), &store, &searcher, code.is_some())?.map(|mut v| v.remove(0));
     let encoded = Instant::now();
     let options = SearchOptions {
-        kinds: if kinds.is_empty() {
-            None
-        } else {
-            Some(kinds.iter().copied().collect())
-        },
+        kinds: if kinds.is_empty() { None } else { Some(kinds.iter().copied().collect()) },
         limit: n,
         z_gate: tuning.zgate,
         word_weight: tuning.word_weight,
@@ -657,26 +538,15 @@ fn print_hits(hits: &[SearchHit], json: bool, footer: &str) -> Result<()> {
         println!("no good matches");
     }
     for (rank, hit) in hits.iter().enumerate() {
-        let why: Vec<String> = [
-            hit.z.map(|z| format!("z {z:.1}")),
-            hit.keyword_rank.map(|rank| format!("words #{rank}")),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        let why: Vec<String> =
+            [hit.z.map(|z| format!("z {z:.1}")), hit.keyword_rank.map(|rank| format!("words #{rank}"))]
+                .into_iter()
+                .flatten()
+                .collect();
         let place = location(hit);
         let (folder, name) = hit.path.rsplit_once('/').unwrap_or(("", &hit.path));
-        let place = if place.is_empty() {
-            String::new()
-        } else {
-            format!("  [{place}]")
-        };
-        println!(
-            "{:>2}. {:<10} {name}{place}   ({})",
-            rank + 1,
-            hit.kind.as_str(),
-            why.join(", ")
-        );
+        let place = if place.is_empty() { String::new() } else { format!("  [{place}]") };
+        println!("{:>2}. {:<10} {name}{place}   ({})", rank + 1, hit.kind.as_str(), why.join(", "));
         println!("      {}", tilde(folder));
         if let Some(excerpt) = hit.excerpt.as_ref().filter(|excerpt| !excerpt.is_empty()) {
             println!("      “{}”", excerpt.chars().take(160).collect::<String>());
@@ -699,10 +569,7 @@ fn status(args: &IndexArgs) -> Result<()> {
         println!("  {:<11} {:>6}   {}", kind.as_str(), total, states_line(states));
     }
     if counts.unfinished > 0 {
-        println!(
-            "long files still being read: {} ({} pages and chunks left)",
-            counts.unfinished, counts.left
-        );
+        println!("long files still being read: {} ({} pages and chunks left)", counts.unfinished, counts.left);
     }
     if let Some(fingerprint) = store.meta("fingerprint")? {
         println!("built with: {fingerprint}");
@@ -744,9 +611,7 @@ fn change_folders(folders: &[PathBuf], code: bool, add: bool) -> Result<()> {
         (&mut settings.folders, &mut settings.skipped)
     };
     let expanded = |list: &Vec<String>| -> Vec<String> {
-        list.iter()
-            .map(|path| config::expand(path).to_string_lossy().into_owned())
-            .collect()
+        list.iter().map(|path| config::expand(path).to_string_lossy().into_owned()).collect()
     };
     let mut selection = {
         let (chosen, skipped) = (expanded(chosen), expanded(skipped));
@@ -761,23 +626,11 @@ fn change_folders(folders: &[PathBuf], code: bool, add: bool) -> Result<()> {
         }
         selection.set_folder(&folder.to_string_lossy(), add);
     }
-    *chosen = selection
-        .chosen()
-        .iter()
-        .map(|path| config::shorten(Path::new(path)))
-        .collect();
-    *skipped = selection
-        .skipped()
-        .iter()
-        .map(|path| config::shorten(Path::new(path)))
-        .collect();
+    *chosen = selection.chosen().iter().map(|path| config::shorten(Path::new(path))).collect();
+    *skipped = selection.skipped().iter().map(|path| config::shorten(Path::new(path))).collect();
     settings.save()?;
     println!("{}", config::Config::file().display());
-    for folder in if code {
-        &settings.code_folders
-    } else {
-        &settings.folders
-    } {
+    for folder in if code { &settings.code_folders } else { &settings.folders } {
         println!("  {folder}");
     }
     if let Some(mut client) = Client::connect() {
@@ -795,15 +648,15 @@ fn waybar(args: &IndexArgs, follow: bool) -> Result<()> {
             Some(mut client) if follow => {
                 let first = client.send(&Request::Watch);
                 if let Ok(response) = first {
-                    print_waybar(response.status.as_ref());
+                    print_waybar(response.status.as_deref());
                     while let Ok(response) = client.read() {
-                        print_waybar(response.status.as_ref());
+                        print_waybar(response.status.as_deref());
                     }
                 }
             }
             Some(mut client) => {
                 let response = client.send(&Request::Status)?;
-                print_waybar(response.status.as_ref());
+                print_waybar(response.status.as_deref());
                 return Ok(());
             }
             None => print_waybar(None),
@@ -839,11 +692,7 @@ fn print_waybar(status: Option<&protocol::Status>) {
                 tooltip += &format!("\nlast problem: {error}");
             }
             let busy = matches!(status.state.as_str(), "syncing" | "indexing" | "finishing");
-            let text = if busy && status.pending > 0 {
-                format!("{icon} {percent}%")
-            } else {
-                icon.to_string()
-            };
+            let text = if busy && status.pending > 0 { format!("{icon} {percent}%") } else { icon.to_string() };
             serde_json::json!({"text": text, "tooltip": tooltip, "class": status.state, "alt": status.state, "percentage": percent})
         }
     };
@@ -879,16 +728,9 @@ fn evaluate(file: &Path, args: &IndexArgs, tuning: &Tuning, depth: usize) -> Res
     let eval: EvalFile = serde_json::from_slice(&std::fs::read(absolute(file))?).context("not an eval file")?;
     let base = absolute(Path::new(&eval.base)).to_string_lossy().into_owned();
     // "code: …" queries search the code index (with its prompt), the others the main one.
-    let is_code: Vec<bool> = eval
-        .queries
-        .iter()
-        .map(|query| code_query::text(&query.q).is_some())
-        .collect();
-    let texts: Vec<String> = eval
-        .queries
-        .iter()
-        .map(|query| code_query::text(&query.q).unwrap_or(query.q.clone()))
-        .collect();
+    let is_code: Vec<bool> = eval.queries.iter().map(|query| code_query::text(&query.q).is_some()).collect();
+    let texts: Vec<String> =
+        eval.queries.iter().map(|query| code_query::text(&query.q).unwrap_or(query.q.clone())).collect();
     let mut vectors: Vec<Option<Vec<f32>>> = vec![None; texts.len()];
     let stores: Vec<(bool, IndexStore)> = is_code
         .iter()
@@ -913,17 +755,9 @@ fn evaluate(file: &Path, args: &IndexArgs, tuning: &Tuning, depth: usize) -> Res
     let mut by_tag: BTreeMap<String, Row> = BTreeMap::new();
     let (mut shown, mut listed, mut folded) = (0, 0, 0);
     for (index, query) in eval.queries.iter().enumerate() {
-        let searcher = &mut searchers
-            .iter_mut()
-            .find(|(code, _)| *code == is_code[index])
-            .unwrap()
-            .1;
+        let searcher = &mut searchers.iter_mut().find(|(code, _)| *code == is_code[index]).unwrap().1;
         let options = SearchOptions {
-            kinds: query
-                .kind
-                .as_ref()
-                .and_then(|kind| kind.parse().ok())
-                .map(|kind| HashSet::from([kind])),
+            kinds: query.kind.as_ref().and_then(|kind| kind.parse().ok()).map(|kind| HashSet::from([kind])),
             limit: depth,
             z_gate: tuning.zgate,
             word_weight: tuning.word_weight,
@@ -939,10 +773,7 @@ fn evaluate(file: &Path, args: &IndexArgs, tuning: &Tuning, depth: usize) -> Res
             .map(|entry| {
                 let (path, range) = entry.split_once('@').unwrap_or((entry, ""));
                 let bounds: Vec<f64> = range.split('-').filter_map(|part| part.parse().ok()).collect();
-                (
-                    format!("{base}/{path}"),
-                    (bounds.len() == 2).then(|| (bounds[0], bounds[1])),
-                )
+                (format!("{base}/{path}"), (bounds.len() == 2).then(|| (bounds[0], bounds[1])))
             })
             .collect();
         // A place to be at: a page or moment starts in the range; a stretch of code overlaps it.
@@ -956,9 +787,7 @@ fn evaluate(file: &Path, args: &IndexArgs, tuning: &Tuning, depth: usize) -> Res
         let rank = hits
             .iter()
             .position(|hit| {
-                targets
-                    .iter()
-                    .any(|(path, range)| hit.path == *path && range.is_none_or(|range| at(hit, range)))
+                targets.iter().any(|(path, range)| hit.path == *path && range.is_none_or(|range| at(hit, range)))
             })
             .map(|position| position + 1);
         if rank.is_some_and(|rank| rank > strong) {
@@ -980,31 +809,16 @@ fn evaluate(file: &Path, args: &IndexArgs, tuning: &Tuning, depth: usize) -> Res
             .map(|hit| {
                 let place = location(hit);
                 let name = hit.path.rsplit('/').next().unwrap_or(&hit.path).to_string();
-                if place.is_empty() {
-                    name
-                } else {
-                    format!("{name} [{place}]")
-                }
+                if place.is_empty() { name } else { format!("{name} [{place}]") }
             })
             .unwrap_or_else(|| "-".into());
-        let found = rank
-            .map(|rank| format!("{:>4}", format!("#{rank}")))
-            .unwrap_or_else(|| "miss".into());
+        let found = rank.map(|rank| format!("{:>4}", format!("#{rank}"))).unwrap_or_else(|| "miss".into());
         println!("{found}  {tag:<11} {:<42} top: {top}", format!("“{}”", query.q));
     }
     println!();
-    println!(
-        "{:<12} {:>3}  {:>5}  {:>5}  {:>5}  {:>5}",
-        "tag", "n", "R@1", "R@5", "R@10", "MRR"
-    );
+    println!("{:<12} {:>3}  {:>5}  {:>5}  {:>5}  {:>5}", "tag", "n", "R@1", "R@5", "R@10", "MRR");
     let mut rows: Vec<_> = by_tag.iter().collect();
-    rows.sort_by_key(|(tag, _)| {
-        if tag.as_str() == "ALL" {
-            "~".to_string()
-        } else {
-            tag.to_string()
-        }
-    });
+    rows.sort_by_key(|(tag, _)| if tag.as_str() == "ALL" { "~".to_string() } else { tag.to_string() });
     for (tag, row) in rows {
         let n = row.n as f64;
         println!(

@@ -8,16 +8,10 @@ fn main() {
     let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     let source = root.join("Vendor/llama.cpp");
     if !source.join("CMakeLists.txt").exists() {
-        panic!(
-            "llama.cpp isn't in {}: run scripts/fetch-llama.sh first",
-            source.display()
-        );
+        panic!("llama.cpp isn't in {}: run scripts/fetch-llama.sh first", source.display());
     }
     println!("cargo:rerun-if-changed={}", source.join("include/llama.h").display());
-    println!(
-        "cargo:rerun-if-changed={}",
-        root.join("scripts/llama.cpp-no-logits.patch").display()
-    );
+    println!("cargo:rerun-if-changed={}", root.join("scripts/llama.cpp-no-logits.patch").display());
     println!("cargo:rerun-if-changed=wrapper.h");
 
     let vulkan = env::var_os("CARGO_FEATURE_VULKAN").is_some();
@@ -46,14 +40,7 @@ fn main() {
         .build();
     let build = out.join("build");
 
-    for dir in [
-        "src",
-        "tools/mtmd",
-        "ggml/src",
-        "ggml/src/ggml-vulkan",
-        "ggml/src/ggml-cuda",
-        "vendor/hash",
-    ] {
+    for dir in ["src", "tools/mtmd", "ggml/src", "ggml/src/ggml-vulkan", "ggml/src/ggml-cuda", "vendor/hash"] {
         println!("cargo:rustc-link-search=native={}", build.join(dir).display());
     }
     // Dependents before what they depend on: GNU ld resolves static libraries in one pass.
@@ -91,7 +78,5 @@ fn main() {
         .prepend_enum_name(false)
         .generate()
         .expect("bindgen failed");
-    bindings
-        .write_to_file(PathBuf::from(env::var("OUT_DIR").unwrap()).join("bindings.rs"))
-        .unwrap();
+    bindings.write_to_file(PathBuf::from(env::var("OUT_DIR").unwrap()).join("bindings.rs")).unwrap();
 }

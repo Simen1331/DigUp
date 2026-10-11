@@ -29,8 +29,7 @@ const ARABIC: Range<u32> = 0x0600..0x0700;
 /// True for words of scripts that attach endings to words (Bengali, Hindi, Arabic): keyword search matches them as
 /// prefixes, so "কুমির" finds "কুমিরও" and "مدرس" finds "مدرسة".
 pub fn inflects(word: &str) -> bool {
-    word.chars()
-        .any(|c| INDIC.contains(&(c as u32)) || ARABIC.contains(&(c as u32)))
+    word.chars().any(|c| INDIC.contains(&(c as u32)) || ARABIC.contains(&(c as u32)))
 }
 
 /// Letters and marks (Foundation's `CharacterSet.letters`): marks count, such as Bengali vowel signs.
@@ -72,11 +71,7 @@ pub fn has_words(text: &str) -> bool {
 /// For matching: normalized, lowercased, and without Latin accents (as FTS5's remove_diacritics does).
 fn fold(text: &str) -> String {
     let lower = normalized(text).to_lowercase();
-    lower
-        .nfd()
-        .filter(|c| !(0x0300..0x0370).contains(&(*c as u32)))
-        .nfc()
-        .collect()
+    lower.nfd().filter(|c| !(0x0300..0x0370).contains(&(*c as u32))).nfc().collect()
 }
 
 /// `text` folded one grapheme at a time, remembering where each piece came from.
@@ -97,11 +92,7 @@ impl Folded {
             origin.extend(std::iter::repeat_n(graphemes.len(), piece.len()));
             graphemes.push(start..start + grapheme.len());
         }
-        Folded {
-            text,
-            origin,
-            graphemes,
-        }
+        Folded { text, origin, graphemes }
     }
 
     /// The bytes of the source that `range` (in `text`) came from.
@@ -156,10 +147,7 @@ pub fn matches(word: &str, text: &str) -> Vec<Range<usize>> {
             }
             range = range.start..end;
         }
-        if found
-            .last()
-            .is_some_and(|last| last.start < range.end && range.start < last.end)
-        {
+        if found.last().is_some_and(|last| last.start < range.end && range.start < last.end) {
             continue;
         }
         found.push(range);
@@ -259,27 +247,19 @@ impl PageTextProblem {
 
 /// Dependent vowel signs of Bengali and Devanagari: in a real word, each follows a consonant (or its nukta).
 fn is_indic_vowel_sign(value: u32) -> bool {
-    matches!(
-        value,
-        0x09BE..=0x09C4 | 0x09C7 | 0x09C8 | 0x09CB | 0x09CC | 0x09D7 | 0x09E2 | 0x09E3
-    ) || matches!(value, 0x093A | 0x093B | 0x093E..=0x094C | 0x094E | 0x094F | 0x0955..=0x0957 | 0x0962 | 0x0963)
+    matches!(value, 0x09BE..=0x09C4 | 0x09C7 | 0x09C8 | 0x09CB | 0x09CC | 0x09D7 | 0x09E2 | 0x09E3)
+        || matches!(value, 0x093A | 0x093B | 0x093E..=0x094C | 0x094E | 0x094F | 0x0955..=0x0957 | 0x0962 | 0x0963)
 }
 
 fn is_indic_consonant_or_nukta(value: u32) -> bool {
-    matches!(
-        value,
-        0x0995..=0x09B9 | 0x09BC | 0x09CE | 0x09DC | 0x09DD | 0x09DF | 0x09F0 | 0x09F1
-    ) || matches!(value, 0x0915..=0x0939 | 0x093C | 0x0958..=0x095F | 0x0979..=0x097F)
+    matches!(value, 0x0995..=0x09B9 | 0x09BC | 0x09CE | 0x09DC | 0x09DD | 0x09DF | 0x09F0 | 0x09F1)
+        || matches!(value, 0x0915..=0x0939 | 0x093C | 0x0958..=0x095F | 0x0979..=0x097F)
 }
 
 /// One line, at most `limit` characters: for result lists.
 pub fn excerpt(text: &str, limit: usize) -> String {
     let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if line.chars().count() > limit {
-        line.chars().take(limit).collect::<String>() + "…"
-    } else {
-        line
-    }
+    if line.chars().count() > limit { line.chars().take(limit).collect::<String>() + "…" } else { line }
 }
 
 #[cfg(test)]
@@ -287,10 +267,7 @@ mod tests {
     use super::*;
 
     fn found(word: &str, text: &str) -> Vec<String> {
-        matches(word, text)
-            .into_iter()
-            .map(|range| text[range].to_string())
-            .collect()
+        matches(word, text).into_iter().map(|range| text[range].to_string()).collect()
     }
 
     #[test]
@@ -320,10 +297,7 @@ mod tests {
             PageTextProblem::check("أ.د.محمد علي، أستاذ في الجامعة. د.خالد و د.سارة من شركة ذ.م.م للتجارة"),
             None
         );
-        assert_eq!(
-            PageTextProblem::check(&"\u{F0B7} Item one of the slide\n".repeat(6)),
-            None
-        );
+        assert_eq!(PageTextProblem::check(&"\u{F0B7} Item one of the slide\n".repeat(6)), None);
     }
 
     #[test]

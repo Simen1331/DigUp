@@ -214,11 +214,8 @@ impl LlamaEmbedder {
     /// `count` encoder rows, each `row_size` floats (copied by the batch).
     fn add_rows(&mut self, rows: *const f32, count: usize) -> Result<(), String> {
         for row in 0..count {
-            let embd = sys::llama_embd {
-                data: unsafe { rows.add(row * self.row_size) },
-                n_rows: 1,
-                n_embd: self.row_size,
-            };
+            let embd =
+                sys::llama_embd { data: unsafe { rows.add(row * self.row_size) }, n_rows: 1, n_embd: self.row_size };
             let index = unsafe { sys::llama_batch_ext_add_embd(self.batch, self.sequences - 1, embd) };
             self.place(index)?;
         }
@@ -294,9 +291,7 @@ impl LlamaEmbedder {
                         if tokens.is_null() {
                             continue;
                         }
-                        std::slice::from_raw_parts(tokens, count)
-                            .iter()
-                            .try_for_each(|token| self.add_token(*token))
+                        std::slice::from_raw_parts(tokens, count).iter().try_for_each(|token| self.add_token(*token))
                     } else if sys::mtmd_encode_chunk(self.media, chunk) != 0 {
                         Err(format!("the encoder failed on {path}"))
                     } else {
@@ -312,10 +307,7 @@ impl LlamaEmbedder {
                     }
                 }
                 match outcome {
-                    Ok(()) => self
-                        .run()
-                        .map(|mut vectors| vectors.remove(0))
-                        .map_err(|error| error.to_string()),
+                    Ok(()) => self.run().map(|mut vectors| vectors.remove(0)).map_err(|error| error.to_string()),
                     Err(error) => {
                         self.reset();
                         Err(error)
@@ -356,10 +348,8 @@ impl LlamaEmbedder {
                 return Err(format!("not {}: {path}", if image { "an image" } else { "audio" }));
             }
             if image {
-                let (width, height) = (
-                    sys::mtmd_bitmap_get_nx(bitmap) as usize,
-                    sys::mtmd_bitmap_get_ny(bitmap) as usize,
-                );
+                let (width, height) =
+                    (sys::mtmd_bitmap_get_nx(bitmap) as usize, sys::mtmd_bitmap_get_ny(bitmap) as usize);
                 let Some((to_height, to_width)) = image_sizing::target_size(height, width, budget as usize) else {
                     sys::mtmd_bitmap_free(bitmap);
                     return Err(format!("image too thin to embed: {path}"));
@@ -371,11 +361,7 @@ impl LlamaEmbedder {
                 let pixels = image_sizing::resize_bicubic(source, width, height, to_width, to_height);
                 sys::mtmd_bitmap_free(bitmap);
                 let resized = sys::mtmd_bitmap_init(to_width as u32, to_height as u32, pixels.as_ptr());
-                return if resized.is_null() {
-                    Err(format!("can't resize {path}"))
-                } else {
-                    Ok(resized)
-                };
+                return if resized.is_null() { Err(format!("can't resize {path}")) } else { Ok(resized) };
             }
             let samples = sys::mtmd_bitmap_get_n_bytes(bitmap) / std::mem::size_of::<f32>();
             let limit = 30 * sys::mtmd_get_audio_sample_rate(self.media) as usize;
@@ -384,11 +370,7 @@ impl LlamaEmbedder {
             }
             let prefix = sys::mtmd_bitmap_init_from_audio(limit, sys::mtmd_bitmap_get_data(bitmap) as *const f32);
             sys::mtmd_bitmap_free(bitmap);
-            if prefix.is_null() {
-                Err(format!("can't cut {path} at 30 s"))
-            } else {
-                Ok(prefix)
-            }
+            if prefix.is_null() { Err(format!("can't cut {path} at 30 s")) } else { Ok(prefix) }
         }
     }
 }
@@ -424,33 +406,21 @@ impl Embedder for LlamaEmbedder {
         if !BUDGETS.contains(&budget) {
             return Err(failed(format!("budget must be one of {BUDGETS:?}")));
         }
-        Ok(paths
-            .iter()
-            .map(|path| embedding(self.embed_media(path, true, budget)))
-            .collect())
+        Ok(paths.iter().map(|path| embedding(self.embed_media(path, true, budget))).collect())
     }
 
     fn embed_audio(&mut self, paths: &[String]) -> Result<Vec<Embedding>, WorkerError> {
         if self.media.is_null() {
             return Err(failed("this embedder was started text-only"));
         }
-        Ok(paths
-            .iter()
-            .map(|path| embedding(self.embed_media(path, false, 0)))
-            .collect())
+        Ok(paths.iter().map(|path| embedding(self.embed_media(path, false, 0))).collect())
     }
 }
 
 fn embedding(result: Result<Vec<f32>, String>) -> Embedding {
     match result {
-        Ok(vector) => Embedding {
-            vector: Some(vector),
-            error: None,
-        },
-        Err(error) => Embedding {
-            vector: None,
-            error: Some(error.chars().take(300).collect()),
-        },
+        Ok(vector) => Embedding { vector: Some(vector), error: None },
+        Err(error) => Embedding { vector: None, error: Some(error.chars().take(300).collect()) },
     }
 }
 
@@ -537,10 +507,7 @@ pub fn devices() -> Vec<String> {
     let mut lines = Vec::new();
     // SAFETY: the strings llama.cpp returns here are static.
     unsafe {
-        lines.push(format!(
-            "llama.cpp: {}",
-            CStr::from_ptr(sys::llama_print_system_info()).to_string_lossy().trim()
-        ));
+        lines.push(format!("llama.cpp: {}", CStr::from_ptr(sys::llama_print_system_info()).to_string_lossy().trim()));
         for index in 0..sys::ggml_backend_dev_count() {
             let device = sys::ggml_backend_dev_get(index);
             let name = CStr::from_ptr(sys::ggml_backend_dev_name(device)).to_string_lossy();

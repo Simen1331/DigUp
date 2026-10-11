@@ -6,10 +6,7 @@ pub const DIMENSION: usize = 768;
 
 /// A vector as the index stores it: float16, little-endian.
 pub fn half_bytes(vector: &[f32]) -> Vec<u8> {
-    vector
-        .iter()
-        .flat_map(|value| f16::from_f32(*value).to_le_bytes())
-        .collect()
+    vector.iter().flat_map(|value| f16::from_f32(*value).to_le_bytes()).collect()
 }
 
 /// The vectors search scores, as stored (float16), with room to turn `BLOCK_ROWS` of them into float32 at a time:
@@ -36,8 +33,7 @@ impl VectorStorage {
         if bytes.len() != DIMENSION * 2 {
             return false;
         }
-        self.halves
-            .extend(bytes.as_chunks::<2>().0.iter().map(|pair| f16::from_le_bytes(*pair)));
+        self.halves.extend(bytes.as_chunks::<2>().0.iter().map(|pair| f16::from_le_bytes(*pair)));
         true
     }
 
@@ -90,9 +86,7 @@ mod tests {
 
     #[test]
     fn half_vectors_convert_back_exactly() {
-        let vector: Vec<f32> = (0..DIMENSION)
-            .map(|i| ((i as f64 * 0.37).sin() * 0.05) as f32)
-            .collect();
+        let vector: Vec<f32> = (0..DIMENSION).map(|i| ((i as f64 * 0.37).sin() * 0.05) as f32).collect();
         let mut storage = VectorStorage::new(2);
         assert!(storage.push(&half_bytes(&vec![0.0; DIMENSION])));
         assert!(storage.push(&half_bytes(&vector)));

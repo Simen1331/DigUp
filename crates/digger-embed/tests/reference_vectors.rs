@@ -67,33 +67,18 @@ fn vectors_match_the_reference() {
     for ((name, _), vector) in texts.iter().zip(embedder.embed_texts(&inputs).unwrap()) {
         made.insert(name.to_string(), vector);
     }
-    for (name, file, budget) in [
-        ("screen-280", "screen.png", 280),
-        ("photo-140", "photo.jpg", 140),
-        ("frame-70", "photo.jpg", 70),
-    ] {
+    for (name, file, budget) in
+        [("screen-280", "screen.png", 280), ("photo-140", "photo.jpg", 140), ("frame-70", "photo.jpg", 70)]
+    {
         let path = folder().join(file).to_string_lossy().into_owned();
         let embedding = embedder.embed_images(&[path], budget).unwrap().remove(0);
-        made.insert(
-            name.into(),
-            embedding
-                .vector
-                .unwrap_or_else(|| panic!("{file}: {:?}", embedding.error)),
-        );
+        made.insert(name.into(), embedding.vector.unwrap_or_else(|| panic!("{file}: {:?}", embedding.error)));
     }
     let speech = folder().join("speech.wav").to_string_lossy().into_owned();
     let embedding = embedder.embed_audio(&[speech]).unwrap().remove(0);
-    made.insert(
-        "speech".into(),
-        embedding
-            .vector
-            .unwrap_or_else(|| panic!("speech.wav: {:?}", embedding.error)),
-    );
+    made.insert("speech".into(), embedding.vector.unwrap_or_else(|| panic!("speech.wav: {:?}", embedding.error)));
 
-    assert_eq!(
-        made.keys().collect::<Vec<_>>(),
-        reference.vectors.keys().collect::<Vec<_>>()
-    );
+    assert_eq!(made.keys().collect::<Vec<_>>(), reference.vectors.keys().collect::<Vec<_>>());
     let mut worst = (String::new(), 1.0f32);
     for (name, vector) in &made {
         let cosine: f32 = vector.iter().zip(&reference.vectors[name]).map(|(a, b)| a * b).sum();

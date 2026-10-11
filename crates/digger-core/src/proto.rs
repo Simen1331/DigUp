@@ -7,6 +7,9 @@
 //! → {"op":"status"}
 //! ← {"ok":true,"status":{"state":"indexing","pending":120,…}}
 //! → {"op":"watch"}                       (the status now, then again each time it changes, until the client leaves)
+//! → {"op":"segment_text","segment_id":7731,"code":false}   ← {"ok":true,"text":"…"}
+//! → {"op":"prewarm"}                     (the panel opened: load the query encoder and the vectors now)
+//! → {"op":"download"}                    (the model and pdfium; progress comes in the status)
 //! → {"op":"pause"} | {"op":"resume"} | {"op":"sync"} | {"op":"reload"} | {"op":"quit"}
 //! ← {"ok":true}  or  {"ok":false,"error":"…"}
 //! ```
@@ -16,9 +19,9 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::model::FileKind;
+use crate::searcher::SearchHit;
 use anyhow::{Context, Result, bail};
-use digger_core::model::FileKind;
-use digger_core::searcher::SearchHit;
 use serde::{Deserialize, Serialize};
 
 /// The daemon's socket.
@@ -51,7 +54,19 @@ pub enum Request {
         /// Words only, no meaning: answers at once, without the query encoder (search-as-you-type).
         #[serde(default)]
         words_only: bool,
+        /// Echoed in the reply, so a client can drop replies to keystrokes it has moved past. A full search that
+        /// hasn't started when a newer one comes on the same connection is answered `superseded`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seq: Option<u64>,
     },
+    /// The text of a page, a passage or a stretch of code, as it's written (for the preview).
+    SegmentText {
+        segment_id: i64,
+        #[serde(default)]
+        code: bool,
+    },
+    Prewarm,
+    Download,
     Status,
     Watch,
     Pause,
@@ -72,6 +87,9 @@ pub struct Hit {
     pub kind: String,
     /// What the hit points at: page, page_image, chunk, image, ocr, frame, audio, lines, cells, name.
     pub segment: String,
+    /// For `segment_text`.
+    #[serde(default)]
+    pub segment_id: i64,
     pub score: f64,
     /// Results scoring under half the top one are "weaker matches" (folded away by default).
     pub strong: bool,
@@ -107,9 +125,8 @@ impl Hit {
             z: self.z,
             cosine: None,
             keyword_rank: self.keyword_rank,
-            segment: digger_core::model::SegmentKind::parse(&self.segment)
-                .unwrap_or(digger_core::model::SegmentKind::Name),
-            segment_id: 0,
+            segment: crate::model::SegmentKind::parse(&self.segment).unwrap_or(crate::model::SegmentKind::Name),
+            segment_id: self.segment_id,
             loc: self.loc,
             loc_end: self.loc_end,
             excerpt: self.excerpt.clone(),
@@ -125,6 +142,7 @@ impl Hit {
             path: hit.path.clone(),
             kind: hit.kind.as_str().into(),
             segment: hit.segment.as_str().into(),
+            segment_id: hit.segment_id,
             score: hit.score,
             strong,
             z: hit.z,
@@ -168,6 +186,24 @@ pub struct Status {
     pub code_missing: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// The model's download: missing | downloading | ready | failed.
+    #[serde(default)]
+    pub model: ModelStatus,
+    /// The query encoder: idle | starting | ready | failed.
+    #[serde(default)]
+    pub encoder: String,
+    /// Code search is on (there are code folders).
+    #[serde(default)]
+    pub has_code: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ModelStatus {
+    pub state: String,
+    /// How much of the download is there, 0 to 1.
+    pub fraction: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -182,23 +218,29 @@ pub struct Response {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<Status>,
+    pub status: Option<Box<Status>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
+    /// False when meaning search couldn't run (no model yet, or words only): the hits are word matches.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meaning: Option<bool>,
+    /// The search went to the code index.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<bool>,
+    /// The query's words, for marking them in previews.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terms: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 impl Response {
     pub fn ok() -> Response {
-        Response {
-            ok: true,
-            ..Default::default()
-        }
+        Response { ok: true, ..Default::default() }
     }
 
     pub fn error(message: impl Into<String>) -> Response {
-        Response {
-            ok: false,
-            error: Some(message.into()),
-            ..Default::default()
-        }
+        Response { ok: false, error: Some(message.into()), ..Default::default() }
     }
 }
 
@@ -213,10 +255,7 @@ impl Client {
     pub fn connect() -> Option<Client> {
         let stream = UnixStream::connect(socket_path()).ok()?;
         stream.set_read_timeout(Some(Duration::from_secs(120))).ok()?;
-        Some(Client {
-            reader: BufReader::new(stream.try_clone().ok()?),
-            writer: stream,
-        })
+        Some(Client { reader: BufReader::new(stream.try_clone().ok()?), writer: stream })
     }
 
     pub fn send(&mut self, request: &Request) -> Result<Response> {
@@ -238,11 +277,7 @@ impl Client {
     /// Sends a request that only says ok or not.
     pub fn command(&mut self, request: &Request) -> Result<()> {
         let response = self.send(request)?;
-        if response.ok {
-            Ok(())
-        } else {
-            bail!(response.error.unwrap_or_else(|| "the daemon said no".into()))
-        }
+        if response.ok { Ok(()) } else { bail!(response.error.unwrap_or_else(|| "the daemon said no".into())) }
     }
 }
 
@@ -251,11 +286,7 @@ pub fn kinds(names: &[String]) -> Result<Option<std::collections::HashSet<FileKi
     if names.is_empty() {
         return Ok(None);
     }
-    names
-        .iter()
-        .map(|name| name.parse())
-        .collect::<Result<_, _>>()
-        .map(Some)
+    names.iter().map(|name| name.parse()).collect::<Result<_, _>>().map(Some)
 }
 
 #[cfg(test)]
@@ -272,7 +303,8 @@ mod tests {
                 limit: 20,
                 kinds: vec![],
                 prefix_last: false,
-                words_only: false
+                words_only: false,
+                seq: None
             }
         );
         assert_eq!(serde_json::to_string(&Request::Pause).unwrap(), r#"{"op":"pause"}"#);

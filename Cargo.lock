@@ -450,19 +450,16 @@ dependencies = [
  "clap",
  "digger-core",
  "digger-embed",
- "flate2",
  "notify",
  "serde",
  "serde_json",
- "sha2",
- "tar",
- "toml",
 ]
 
 [[package]]
 name = "digger-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "half",
  "image",
  "kamadak-exif",
@@ -475,6 +472,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+ "toml",
  "unicode-general-category",
  "unicode-normalization",
  "unicode-segmentation",
@@ -486,10 +484,12 @@ name = "digger-embed"
 version = "0.1.0"
 dependencies = [
  "digger-core",
+ "flate2",
  "llama-sys",
  "serde",
  "serde_json",
  "sha2",
+ "tar",
  "ureq",
 ]
 

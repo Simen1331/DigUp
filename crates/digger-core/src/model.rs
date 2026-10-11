@@ -49,10 +49,7 @@ impl FromStr for FileKind {
     type Err = String;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        FileKind::ALL
-            .into_iter()
-            .find(|kind| kind.as_str() == text)
-            .ok_or_else(|| format!("unknown kind {text}"))
+        FileKind::ALL.into_iter().find(|kind| kind.as_str() == text).ok_or_else(|| format!("unknown kind {text}"))
     }
 }
 
@@ -250,11 +247,7 @@ impl IndexOptions {
 
 /// A Double as Swift prints it ("3.0", "30.0"), so fingerprints read as DigUp's do.
 fn swift_double(value: f64) -> String {
-    if value.fract() == 0.0 {
-        format!("{value:.1}")
-    } else {
-        format!("{value}")
-    }
+    if value.fract() == 0.0 { format!("{value:.1}") } else { format!("{value}") }
 }
 
 /// EmbeddingGemma 2's task prompts (model card). Media inputs take no prompt.
@@ -302,23 +295,14 @@ mod tests {
 
     #[test]
     fn fingerprints_read_as_digups() {
-        assert_eq!(
-            IndexOptions::default().fingerprint(),
-            "photo140 shot280 page280 frame70/3.0s audio30.0/25.0s"
-        );
-        let code = IndexOptions {
-            code: true,
-            ..Default::default()
-        };
+        assert_eq!(IndexOptions::default().fingerprint(), "photo140 shot280 page280 frame70/3.0s audio30.0/25.0s");
+        let code = IndexOptions { code: true, ..Default::default() };
         assert_eq!(code.fingerprint(), "code1 lines1800");
     }
 
     #[test]
     fn code_queries() {
-        assert_eq!(
-            code_query::text("code: retry with backoff").as_deref(),
-            Some("retry with backoff")
-        );
+        assert_eq!(code_query::text("code: retry with backoff").as_deref(), Some("retry with backoff"));
         assert_eq!(code_query::text("  CODE:x").as_deref(), Some("x"));
         assert_eq!(code_query::text("code:").as_deref(), Some(""));
         assert_eq!(code_query::text("encode: x"), None);

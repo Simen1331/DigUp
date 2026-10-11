@@ -69,19 +69,11 @@ fn coefficients(in_size: usize, out_size: usize) -> (Vec<usize>, Vec<i32>, usize
         let count = (((center + support + 0.5) as i64) as usize).min(in_size) - first;
         let mut total = 0.0;
         for (x, slot) in row.iter_mut().enumerate() {
-            *slot = if x < count {
-                filter(((x + first) as f64 - center + 0.5) / filter_scale)
-            } else {
-                0.0
-            };
+            *slot = if x < count { filter(((x + first) as f64 - center + 0.5) / filter_scale) } else { 0.0 };
             total += *slot;
         }
         for (x, value) in row.iter().enumerate() {
-            let weight = if x < count && total != 0.0 {
-                value / total
-            } else {
-                *value
-            };
+            let weight = if x < count && total != 0.0 { value / total } else { *value };
             weights[out * size + x] =
                 (weight * (1i64 << PRECISION) as f64 + if weight < 0.0 { -0.5 } else { 0.5 }) as i32;
         }
@@ -101,11 +93,7 @@ fn horizontal(src: &[u8], in_width: usize, rows: usize, out_width: usize) -> Vec
     for y in 0..rows {
         for x in 0..out_width {
             let start = (y * in_width + bounds[x * 2]) * 3;
-            let (mut r, mut g, mut b) = (
-                1i32 << (PRECISION - 1),
-                1i32 << (PRECISION - 1),
-                1i32 << (PRECISION - 1),
-            );
+            let (mut r, mut g, mut b) = (1i32 << (PRECISION - 1), 1i32 << (PRECISION - 1), 1i32 << (PRECISION - 1));
             for k in 0..bounds[x * 2 + 1] {
                 let w = weights[x * size + k];
                 let p = &src[start + k * 3..start + k * 3 + 3];
