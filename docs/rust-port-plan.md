@@ -107,7 +107,7 @@ Fase 0–3 kan bygges og testes i skyen, i denne Linux-containeren. GUI-en og Vu
 Bygg selv på Omarchy:
 
 ```sh
-sudo pacman -S --needed rust cmake clang vulkan-headers vulkan-icd-loader shaderc   # shaderc gir glslc
+sudo pacman -S --needed rust cmake clang vulkan-headers vulkan-icd-loader spirv-headers shaderc   # shaderc gir glslc
 scripts/fetch-llama.sh
 cargo build --release --features vulkan
 target/release/digger info    # skal vise RTX 3060 som Vulkan-enhet
