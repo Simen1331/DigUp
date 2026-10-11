@@ -4,10 +4,10 @@ name: Rust
 
 on:
   push:
-    paths: ["crates/**", "Cargo.*", "rustfmt.toml", "scripts/fetch-llama.sh", "scripts/build-llama.sh",
+    paths: ["crates/**", "Cargo.*", "rustfmt.toml", "Tests/LlamaRuntimeTests/Reference/**", "scripts/fetch-llama.sh", "scripts/build-llama.sh",
             "scripts/llama.cpp-no-logits.patch", ".github/workflows/rust.yml"]
   pull_request:
-    paths: ["crates/**", "Cargo.*", "rustfmt.toml", "scripts/fetch-llama.sh", "scripts/build-llama.sh",
+    paths: ["crates/**", "Cargo.*", "rustfmt.toml", "Tests/LlamaRuntimeTests/Reference/**", "scripts/fetch-llama.sh", "scripts/build-llama.sh",
             "scripts/llama.cpp-no-logits.patch", ".github/workflows/rust.yml"]
 
 permissions:
@@ -27,7 +27,13 @@ jobs:
       - name: Libraries and tools
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q libheif-dev tesseract-ocr ffmpeg
+          sudo apt-get install -y -q libheif-dev tesseract-ocr ffmpeg libgtk-4-dev libgtksourceview-5-dev \
+            meson ninja-build libwayland-dev wayland-protocols
+          # gtk4-layer-shell for the panel: not packaged in Ubuntu 24.04 (Arch has it).
+          git clone -q --depth 1 --branch v1.1.1 https://github.com/wmww/gtk4-layer-shell /tmp/gtk4-layer-shell
+          meson setup /tmp/gtk4-layer-shell/build /tmp/gtk4-layer-shell -Dexamples=false -Ddocs=false -Dtests=false \
+            -Dintrospection=false -Dvapi=false --prefix=/usr
+          sudo ninja -C /tmp/gtk4-layer-shell/build install
           curl -sSLo pdfium.tgz https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7881/pdfium-linux-x64.tgz
           echo "1470e21b8b4a3b4ad7f85684e2da11d94f3b69a86d81dee11b9b6709d927ac1d  pdfium.tgz" | sha256sum -c
           mkdir -p ~/.local/share/digger/lib

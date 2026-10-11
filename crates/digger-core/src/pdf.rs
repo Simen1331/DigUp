@@ -146,6 +146,58 @@ fn render(page: &PdfPage, pixels: u32) -> Option<image::DynamicImage> {
     Some(image::DynamicImage::ImageRgb8(image.to_rgb8()))
 }
 
+/// Where a word is marked on a drawn page: x, y, width and height in pixels.
+pub type Mark = (u32, u32, u32, u32);
+
+/// A page drawn for the preview: `width` pixels wide, `words` marked in yellow where they are on it (as a
+/// highlighter marks: the text shows through). Returns the picture and where the first mark is (x, y, width, height in
+/// pixels), so the preview can show that part. `page` counts from 1.
+pub fn render_page(
+    path: &Path,
+    page: u32,
+    width: u32,
+    words: &[String],
+) -> Result<(image::DynamicImage, Option<Mark>), ExtractError> {
+    let pdfium = pdfium().ok_or_else(|| ExtractError::Unreadable("pdfium isn't installed (digger download)".into()))?;
+    let document = pdfium.load_pdf_from_file(path, None).map_err(unreadable)?;
+    let page = document.pages().get(page.saturating_sub(1) as i32).map_err(unreadable)?;
+    let (page_width, page_height) = (page.width().value.max(1.0), page.height().value.max(1.0));
+    let scale = width as f32 / page_width;
+    let config = PdfRenderConfig::new()
+        .set_target_size(width as Pixels, (page_height * scale).round() as Pixels)
+        .render_form_data(true);
+    let mut picture = page.render_with_config(&config).map_err(unreadable)?.as_image().map_err(unreadable)?.to_rgb8();
+    let mut marks: Vec<Mark> = Vec::new();
+    if let Ok(text) = page.text() {
+        let options = PdfSearchOptions::new().match_case(false);
+        for word in words.iter().filter(|word| word.chars().count() >= 2) {
+            let Ok(search) = text.search(word, &options) else { continue };
+            for found in search.iter(PdfSearchDirection::SearchForward).take(50) {
+                for segment in found.iter() {
+                    let bounds = segment.bounds();
+                    let x = ((bounds.left().value * scale).max(0.0)) as u32;
+                    let y = (((page_height - bounds.top().value) * scale).max(0.0)) as u32;
+                    let w = ((bounds.right().value - bounds.left().value) * scale).max(1.0) as u32;
+                    let h = ((bounds.top().value - bounds.bottom().value) * scale).max(1.0) as u32;
+                    marks.push((x, y, w, h));
+                }
+            }
+        }
+    }
+    // Multiply with a highlighter yellow: white paper turns yellow, the letters stay dark.
+    for &(x, y, w, h) in &marks {
+        for py in y.saturating_sub(1)..(y + h + 1).min(picture.height()) {
+            for px in x..(x + w).min(picture.width()) {
+                let pixel = picture.get_pixel_mut(px, py);
+                let [r, g, b] = pixel.0;
+                pixel.0 = [r, (g as u32 * 235 / 255) as u8, (b as u32 * 90 / 255) as u8];
+            }
+        }
+    }
+    let first = marks.into_iter().min_by_key(|mark| (mark.1, mark.0));
+    Ok((image::DynamicImage::ImageRgb8(picture), first))
+}
+
 /// Every page's text, for tests and the preview.
 pub fn texts(path: &Path) -> Result<Vec<String>, ExtractError> {
     let pdfium = pdfium().ok_or_else(|| ExtractError::Unreadable("pdfium isn't installed".into()))?;
@@ -215,5 +267,12 @@ mod tests {
         // Only the pages asked for.
         let first = pages(&pdf, |_| 1..5, 200, 700, dir.path()).unwrap();
         assert_eq!(first.pages.iter().map(|page| page.number).collect::<Vec<_>>(), [2]);
+        // The preview: the page with the word marked, and where the mark is.
+        let (picture, mark) = render_page(&pdf, 1, 800, &["reptiles".into()]).unwrap();
+        assert_eq!(picture.width(), 800);
+        let (x, y, w, h) = mark.unwrap();
+        assert!(y < 200 && w > 20 && h > 5, "{x} {y} {w} {h}");
+        let pixel = picture.to_rgb8().get_pixel(x + w / 2, y + h / 2).0;
+        assert!(pixel[2] < pixel[0], "{pixel:?}"); // yellow, not white
     }
 }

@@ -1,0 +1,21 @@
+[package]
+name = "digger-panel"
+description = "Digger's search panel: a GTK4 layer-shell overlay for Hyprland, with previews, settings and setup"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["layer-shell"]
+# The panel as an overlay (Hyprland, Sway…). Without it, or where the compositor lacks the protocol, it's a window.
+layer-shell = ["dep:gtk4-layer-shell"]
+
+[dependencies]
+async-channel = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+digger-core = { path = "../digger-core" }
+gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
+gtk4-layer-shell = { version = "0.8", optional = true }
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde_json = "1"
+sourceview5 = { version = "0.11", features = ["v5_10"] }
