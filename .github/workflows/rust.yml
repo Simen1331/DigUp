@@ -45,4 +45,4 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --release --features "${{ matrix.features }}" -- -D warnings
       - run: cargo test --release --features "${{ matrix.features }}"
-      - run: target/release/digger info
+      - run: cargo run --release --features "${{ matrix.features }}" -- info
