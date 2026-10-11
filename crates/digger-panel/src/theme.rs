@@ -143,8 +143,50 @@ window.digger, window.digger-window {
 .digger-tile {
   padding: 6px;
 }
-.digger-tile:selected {
+.digger-frame flowbox > flowboxchild {
+  border-radius: 0;
+}
+.digger-frame flowbox > flowboxchild:selected {
   background-color: alpha(@selected-text, 0.18);
+  color: @text;
+}
+.digger-frame flowbox > flowboxchild:selected .digger-name {
+  color: @selected-text;
+}
+.digger-frame entry, .digger-frame searchentry, .digger-settings entry {
+  background-color: alpha(@text, 0.06);
+  color: @text;
+  border: 1px solid alpha(@border, 0.4);
+  border-radius: 0;
+  box-shadow: none;
+}
+.digger-frame entry.digger-query {
+  background: transparent;
+  border: none;
+}
+window.digger-settings {
+  background-color: @base;
+  color: @text;
+}
+.digger-settings stacksidebar, .digger-settings stacksidebar list {
+  background-color: alpha(@text, 0.03);
+}
+.digger-settings stacksidebar row:selected {
+  background-color: alpha(@selected-text, 0.18);
+  color: @selected-text;
+}
+.digger-heading {
+  font-weight: bold;
+  font-size: 15px;
+  margin-top: 6px;
+}
+.digger-code {
+  font-family: monospace;
+  background-color: alpha(@text, 0.06);
+  padding: 8px;
+}
+.digger-frame searchentry image, .digger-frame entry image {
+  color: alpha(@text, 0.6);
 }
 "#;
 
@@ -184,14 +226,21 @@ pub fn load(settings: &digger_core::settings::PanelSettings) -> Theme {
     gtk::style_context_add_provider_for_display(&display, &colors, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION - 1);
     let style = gtk::CssProvider::new();
     let family = font(&settings.font).replace('"', "");
-    style.load_from_string(&format!("{STYLE}\n.digger-frame, .digger-window-frame {{ font-family: \"{family}\"; }}"));
+    style.load_from_string(&format!(
+        "{STYLE}\n.digger-frame, .digger-window-frame, window.digger-settings {{ font-family: \"{family}\"; }}"
+    ));
     gtk::style_context_add_provider_for_display(&display, &style, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
 
     let use_omarchy = settings.theme != "gtk";
     let reload = {
         let colors = colors.clone();
         move || {
-            let walker = omarchy_theme().map(|folder| folder.join("walker.css")).filter(|file| file.exists());
+            let theme = omarchy_theme().filter(|_| use_omarchy);
+            // Buttons, switches and lists follow the theme's mode (Omarchy marks light themes with `light.mode`).
+            if let (Some(folder), Some(settings)) = (&theme, gtk::Settings::default()) {
+                settings.set_gtk_application_prefer_dark_theme(!folder.join("light.mode").exists());
+            }
+            let walker = theme.map(|folder| folder.join("walker.css")).filter(|file| file.exists());
             match walker {
                 Some(file) if use_omarchy => colors.load_from_path(file),
                 _ => colors.load_from_string(""),

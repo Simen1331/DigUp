@@ -11,6 +11,7 @@ default = ["layer-shell"]
 layer-shell = ["dep:gtk4-layer-shell"]
 
 [dependencies]
+anyhow = "1"
 async-channel = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 digger-core = { path = "../digger-core" }

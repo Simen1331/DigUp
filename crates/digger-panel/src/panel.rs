@@ -592,6 +592,11 @@ impl Panel {
                 self.set_footer("Copied");
                 true
             }
+            gdk::Key::comma if control => {
+                crate::settings::open(&self.window.application().expect("no application"));
+                self.hide();
+                true
+            }
             gdk::Key::o if control => {
                 crate::window::open(&self.window.application().expect("no application"), &self.entry.text());
                 self.hide();

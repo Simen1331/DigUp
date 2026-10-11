@@ -547,6 +547,7 @@ dependencies = [
 name = "digger-panel"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-channel",
  "chrono",
  "digger-core",

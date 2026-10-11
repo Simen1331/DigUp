@@ -158,6 +158,26 @@ impl Config {
         if self.index.is_empty() { paths::data_folder().join("index") } else { expand(&self.index) }
     }
 
+    /// The folders as the folder picker edits them: the main index's, or the code index's.
+    pub fn folder_selection(&self, code: bool) -> FolderSelection {
+        if code {
+            Self::selection(&self.code_folders, &self.code_skipped)
+        } else {
+            Self::selection(&self.folders, &self.skipped)
+        }
+    }
+
+    /// Writes what the folder picker chose back, in the short form ("~/Documents").
+    pub fn set_folder_selection(&mut self, code: bool, selection: &FolderSelection) {
+        let short = |paths: &[String]| paths.iter().map(|path| shorten(Path::new(path))).collect::<Vec<_>>();
+        let (folders, skipped) = (short(selection.chosen()), short(selection.skipped()));
+        if code {
+            (self.code_folders, self.code_skipped) = (folders, skipped);
+        } else {
+            (self.folders, self.skipped) = (folders, skipped);
+        }
+    }
+
     fn selection(folders: &[String], skipped: &[String]) -> FolderSelection {
         let folders: Vec<String> = folders.iter().map(|path| expand(path).to_string_lossy().into_owned()).collect();
         let skipped: Vec<String> = skipped.iter().map(|path| expand(path).to_string_lossy().into_owned()).collect();

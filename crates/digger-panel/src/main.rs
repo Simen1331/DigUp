@@ -4,13 +4,19 @@
 //!   digger-panel            start (hidden, until --toggle), or show it if it's running
 //!   digger-panel --toggle   show or hide the panel
 //!   digger-panel --window   the big search window
+//!   digger-panel --settings the settings
+//!   digger-panel --setup    setup (it opens by itself the first time)
 
 mod client;
+mod folders;
+mod integrate;
 mod open;
 mod panel;
 mod pictures;
 mod preview;
 mod results;
+mod settings;
+mod setup;
 mod theme;
 mod window;
 
@@ -26,7 +32,7 @@ type Started = (Rc<panel::Panel>, theme::Theme);
 fn main() -> glib::ExitCode {
     if std::env::args().any(|argument| argument == "--help" || argument == "-h") {
         println!(
-            "digger-panel: Digger's search panel\n  --toggle   show or hide it\n  --window   the big search window\n  --hidden   start without showing it"
+            "digger-panel: Digger's search panel\n  --toggle   show or hide it\n  --window   the big search window\n  --settings the settings\n  --setup    set Digger up\n  --hidden   start without showing it"
         );
         return glib::ExitCode::SUCCESS;
     }
@@ -41,6 +47,14 @@ fn main() -> glib::ExitCode {
             let settings = digger_core::settings::Config::load().unwrap_or_default();
             let theme = theme::load(&settings.panel);
             let panel = panel::Panel::new(app);
+            let show = gio::SimpleAction::new("show-panel", None);
+            let shown = Rc::downgrade(&panel);
+            show.connect_activate(move |_, _| {
+                if let Some(panel) = shown.upgrade() {
+                    panel.present();
+                }
+            });
+            app.add_action(&show);
             *state.borrow_mut() = Some((panel, theme));
             // It stays in memory with the window hidden: that's what makes it show in a moment.
             std::mem::forget(app.hold());
@@ -52,9 +66,18 @@ fn main() -> glib::ExitCode {
         let Some(panel) = state.borrow().as_ref().map(|(panel, _)| panel.clone()) else {
             return glib::ExitCode::FAILURE;
         };
+        // The first time (no settings yet), setup comes first, however Digger was started.
+        if !digger_core::settings::Config::file().exists()
+            && arguments.first().is_none_or(|first| first != "--settings")
+        {
+            setup::open(app);
+            return glib::ExitCode::SUCCESS;
+        }
         match arguments.first().map(String::as_str) {
             Some("--toggle") => panel.toggle(),
             Some("--window") => window::open(app, ""),
+            Some("--settings") => settings::open(app),
+            Some("--setup") => setup::open(app),
             Some("--hidden") => {}
             _ => panel.present(),
         }
