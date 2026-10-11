@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::Instant;
 
@@ -14,9 +15,12 @@ use crate::code::{self, CodeFile};
 use crate::crawler::{self, CrawlReport};
 use crate::embedder::{Embedder, WorkerError};
 use crate::extract::{self, ExtractError};
+use crate::media::Piece;
 use crate::model::{FileKind, IndexOptions, Modality, SegmentKind, prompts};
+use crate::pdf::Page;
 use crate::search_text::{excerpt, has_words};
 use crate::store::{FileRecord, IndexStore, Info};
+use crate::{images, media, paths, pdf};
 
 #[derive(Debug)]
 pub enum IndexError {
@@ -118,9 +122,20 @@ pub struct Indexer<'a> {
     /// The vector source of the embedders `make_embedder` makes, when it's known without starting one (llama.cpp's
     /// is): then `check_model` can notice a new model before anything needs embedding.
     pub embedder_source: Option<String>,
+    /// Scratch files of the jobs being read (resized pictures, rendered pages, sound windows, frames): one folder per
+    /// indexer, removed when it's dropped.
+    scratch: PathBuf,
+    jobs_prepared: usize,
 }
 
-/// Files read and embedded together, or one step of a long file (`step`: the chunks of a document to read, from 0).
+impl Drop for Indexer<'_> {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.scratch);
+    }
+}
+
+/// Files read and embedded together (pictures 8 at a time, other files one by one), or one step of a long file
+/// (`step`: the pages of a PDF or the chunks of a document to read, from 0).
 #[derive(Clone)]
 struct Job {
     files: Vec<FileRecord>,
@@ -130,6 +145,8 @@ struct Job {
 /// A job read from disk and decoded, ready for the model.
 struct Prepared {
     batch: Vec<FileRecord>,
+    /// Where its scratch files are.
+    folder: PathBuf,
     step: Option<Range<usize>>,
     /// Files already settled (skipped or failed while reading), by their place in the batch.
     outcomes: HashMap<usize, (String, String)>,
@@ -146,11 +163,37 @@ enum Payload {
         characters: usize,
     },
     Code(CodeFile),
+    Images {
+        screenshot: bool,
+        ready: Vec<ReadyImage>,
+    },
+    /// `read`: the pages read (from 0) of the PDF's `total`.
+    Pdf {
+        pages: Vec<Page>,
+        read: Range<usize>,
+        total: usize,
+        title: Option<String>,
+    },
+    Audio {
+        pieces: Vec<Piece>,
+        duration: f64,
+    },
+    Video {
+        frames: Vec<Piece>,
+        sound: Vec<Piece>,
+        duration: f64,
+    },
+}
+
+struct ReadyImage {
+    slot: usize,
+    image: images::Prepared,
+    ocr: String,
 }
 
 impl<'a> Indexer<'a> {
-    /// The kinds this build can read so far.
-    pub const READABLE: [FileKind; 2] = [FileKind::Doc, FileKind::Code];
+    /// The kinds this build can read.
+    pub const READABLE: [FileKind; 7] = FileKind::ALL;
 
     pub fn new(store: &'a IndexStore, options: IndexOptions, make_embedder: MakeEmbedder) -> Indexer<'a> {
         Indexer {
@@ -161,6 +204,8 @@ impl<'a> Indexer<'a> {
             kinds: Self::READABLE.to_vec(),
             reset_on_model_change: None,
             embedder_source: None,
+            scratch: scratch_folder(),
+            jobs_prepared: 0,
         }
     }
 
@@ -247,12 +292,9 @@ impl<'a> Indexer<'a> {
         on_event: &mut dyn FnMut(&Event),
     ) -> Result<BTreeMap<String, usize>> {
         let queue = self.store.pending(limit, only, Some(&self.kinds))?;
-        let jobs: Vec<Job> = queue
-            .iter()
-            .map(|file| Job {
-                files: vec![file.clone()],
-                step: None,
-            })
+        let jobs: Vec<Job> = batches(&queue)
+            .into_iter()
+            .map(|files| Job { files, step: None })
             .collect();
         let mut states = BTreeMap::new();
         let mut done = 0;
@@ -368,16 +410,23 @@ impl<'a> Indexer<'a> {
             let started = Instant::now();
             let prepared = match ahead.take() {
                 Some(handle) => handle.join().expect("the preparing thread panicked"),
-                None => prepare(job.clone(), &self.options),
+                None => {
+                    let folder = self.next_folder();
+                    prepare(job.clone(), &self.options, &folder)
+                }
             };
             if let Some(next) = jobs.get(index + 1).cloned() {
-                let options = self.options.clone();
-                ahead = Some(thread::spawn(move || prepare(next, &options)));
+                let (options, folder) = (self.options.clone(), self.next_folder());
+                ahead = Some(thread::spawn(move || prepare(next, &options, &folder)));
             }
+            let folder = prepared.folder.clone();
             if skip(job) {
+                let _ = std::fs::remove_dir_all(&folder);
                 continue;
             }
-            let results = self.commit(prepared)?;
+            let results = self.commit(prepared);
+            let _ = std::fs::remove_dir_all(&folder);
+            let results = results?;
             committed(
                 index,
                 job,
@@ -385,10 +434,19 @@ impl<'a> Indexer<'a> {
                 started.elapsed().as_secs_f64() / job.files.len() as f64,
             );
         }
-        if let Some(handle) = ahead {
-            let _ = handle.join();
+        // A job prepared for a run that stopped early: throw its files away.
+        if let Some(handle) = ahead
+            && let Ok(prepared) = handle.join()
+        {
+            let _ = std::fs::remove_dir_all(prepared.folder);
         }
         Ok(())
+    }
+
+    /// A fresh scratch folder for the next job.
+    fn next_folder(&mut self) -> PathBuf {
+        self.jobs_prepared += 1;
+        self.scratch.join(format!("batch-{}", self.jobs_prepared))
     }
 
     /// Compares the index with the current model and settings (`embedder_source`), without starting the model; a
@@ -440,6 +498,7 @@ impl<'a> Indexer<'a> {
             step,
             outcomes,
             payload,
+            ..
         } = prepared;
         if let (Some(step), Some((_, detail))) = (&step, outcomes.get(&0)) {
             return Ok(vec![self.stop_reading(&batch[0], step.start, detail)?]);
@@ -459,6 +518,33 @@ impl<'a> Indexer<'a> {
                 characters,
             } => self.doc(&batch[0], &chunks, read, total, characters, later),
             Payload::Code(code) => self.code(&batch[0], &code),
+            Payload::Images { screenshot, ready } => {
+                // Pictures come several to a job, and settle their own results.
+                match self.images(&batch, screenshot, &ready, &mut results) {
+                    Ok(()) => return Ok(results),
+                    Err(IndexError::Database(error)) => {
+                        for item in &ready {
+                            self.store
+                                .finish(batch[item.slot].id, "failed", Some(&error.to_string()), &Info::new())?;
+                            results[item.slot] = ("failed".into(), Some(error.to_string()));
+                        }
+                        return Ok(results);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Payload::Pdf {
+                pages,
+                read,
+                total,
+                title,
+            } => self.pdf(&batch[0], &pages, read, total, title, later),
+            Payload::Audio { pieces, duration } => self.audio(&batch[0], &pieces, duration),
+            Payload::Video {
+                frames,
+                sound,
+                duration,
+            } => self.video(&batch[0], &frames, &sound, duration),
         };
         match outcome {
             Ok(outcome) => results[0] = outcome,
@@ -639,14 +725,336 @@ impl<'a> Indexer<'a> {
         }
         Ok(("done".into(), Some(note)))
     }
+
+    fn images(
+        &mut self,
+        batch: &[FileRecord],
+        screenshot: bool,
+        ready: &[ReadyImage],
+        results: &mut [Outcome],
+    ) -> Result<()> {
+        if ready.is_empty() {
+            return Ok(());
+        }
+        let budget = if screenshot {
+            self.options.screenshot_budget
+        } else {
+            self.options.photo_budget
+        };
+        let paths: Vec<String> = ready.iter().map(|item| item.image.path.clone()).collect();
+        let vectors = self.full_worker()?.embed_images(&paths, budget)?;
+        self.store.transaction(|_| {
+            for (item, embedding) in ready.iter().zip(&vectors) {
+                let file = &batch[item.slot];
+                let Some(vector) = &embedding.vector else {
+                    self.store
+                        .finish(file.id, "failed", embedding.error.as_deref(), &Info::new())?;
+                    results[item.slot] = ("failed".into(), embedding.error.clone());
+                    continue;
+                };
+                self.store.add_segment(
+                    file.id,
+                    SegmentKind::Image,
+                    Modality::Image,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(vector),
+                )?;
+                // The words on screen are for keyword search: codes, names and errors typed exactly. Meaning comes from
+                // the picture alone; a vector of the words made screenshots outrank better matches.
+                if !item.ocr.is_empty() {
+                    let summary = excerpt(&item.ocr, 240);
+                    self.store.add_segment(
+                        file.id,
+                        SegmentKind::Ocr,
+                        Modality::Text,
+                        None,
+                        None,
+                        Some(&summary),
+                        Some(&item.ocr),
+                        None,
+                    )?;
+                }
+                let mut info = Info::from([
+                    ("width".into(), item.image.width.to_string()),
+                    ("height".into(), item.image.height.to_string()),
+                ]);
+                if let Some(taken) = &item.image.taken {
+                    info.insert("taken".into(), taken.clone());
+                }
+                if screenshot {
+                    info.insert("ocr_chars".into(), item.ocr.chars().count().to_string());
+                }
+                self.store.finish(file.id, "done", None, &info)?;
+                let note = screenshot.then(|| format!("ocr {} chars", item.ocr.chars().count()));
+                results[item.slot] = ("done".into(), note);
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    /// Pages `read` of a PDF (all of a short one, a step of a long one). A long one stays `partial` with `read_to` and
+    /// `read_end` (pages, from 0) in its info until its last step.
+    fn pdf(
+        &mut self,
+        file: &FileRecord,
+        pages: &[Page],
+        read: Range<usize>,
+        total: usize,
+        title: Option<String>,
+        later: bool,
+    ) -> Result<Outcome> {
+        let end = total.min(self.options.max_pages);
+        let unread = read.end < end;
+        if pages.is_empty() && !later && !unread {
+            self.store.finish(file.id, "skipped", Some("no pages"), &Info::new())?;
+            return Ok(("skipped".into(), Some("no pages".into())));
+        }
+        let stem = Path::new(&file.path)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("")
+            .to_string();
+        let title = title.unwrap_or(stem);
+        let text_pages: Vec<&Page> = pages.iter().filter(|page| page.image_path.is_none()).collect();
+        // A page that's mostly digits (a table, a data listing) gets keyword search only.
+        let word_pages: Vec<&&Page> = text_pages.iter().filter(|page| has_words(&page.text)).collect();
+        let image_pages: Vec<&Page> = pages.iter().filter(|page| page.image_path.is_some()).collect();
+        let garbled_pages: Vec<&Page> = pages.iter().filter(|page| page.garbled.is_some()).collect();
+        let cut = |text: &str| text.chars().take(4000).collect::<String>();
+        let (mut text_vectors, mut image_vectors, mut garbled_vectors) = (HashMap::new(), Vec::new(), Vec::new());
+        if !word_pages.is_empty() || !image_pages.is_empty() {
+            let budget = self.options.page_budget;
+            let worker = self.full_worker()?;
+            let texts: Vec<String> = word_pages
+                .iter()
+                .map(|page| prompts::document(Some(&title), &cut(&page.text)))
+                .collect();
+            let vectors = if texts.is_empty() {
+                Vec::new()
+            } else {
+                worker.embed_texts(&texts)?
+            };
+            text_vectors = word_pages.iter().map(|page| page.number).zip(vectors).collect();
+            let images: Vec<String> = image_pages.iter().filter_map(|page| page.image_path.clone()).collect();
+            if !images.is_empty() {
+                image_vectors = worker.embed_images(&images, budget)?;
+            }
+            let garbled: Vec<String> = garbled_pages
+                .iter()
+                .map(|page| prompts::document(Some(&title), &cut(page.garbled.as_deref().unwrap_or(""))))
+                .collect();
+            if !garbled.is_empty() {
+                garbled_vectors = worker.embed_texts(&garbled)?;
+            }
+        }
+        self.store.transaction(|_| {
+            // Meaning only: the garbled words are never shown or matched against what you type.
+            for (page, vector) in garbled_pages.iter().zip(&garbled_vectors) {
+                let loc = Some(page.number as f64);
+                self.store.add_segment(
+                    file.id,
+                    SegmentKind::Page,
+                    Modality::Text,
+                    loc,
+                    None,
+                    None,
+                    None,
+                    Some(vector),
+                )?;
+            }
+            for page in &text_pages {
+                self.store.add_segment(
+                    file.id,
+                    SegmentKind::Page,
+                    Modality::Text,
+                    Some(page.number as f64),
+                    None,
+                    Some(&excerpt(&page.text, 240)),
+                    Some(&page.text),
+                    text_vectors
+                        .get(&page.number)
+                        .map(|vector: &Vec<f32>| vector.as_slice()),
+                )?;
+            }
+            for (page, embedding) in image_pages.iter().zip(&image_vectors) {
+                let summary = (!page.text.is_empty()).then(|| excerpt(&page.text, 240));
+                self.store.add_segment(
+                    file.id,
+                    SegmentKind::PageImage,
+                    Modality::Image,
+                    Some(page.number as f64),
+                    None,
+                    summary.as_deref(),
+                    Some(&page.text),
+                    embedding.vector.as_deref(),
+                )?;
+            }
+            let mut info = if later { self.store.info(file.id)? } else { Info::new() };
+            info.insert("pages".into(), total.to_string());
+            let scanned = info
+                .get("scanned_pages")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(0);
+            info.insert("scanned_pages".into(), (scanned + image_pages.len()).to_string());
+            if unread {
+                info.insert("read_to".into(), read.end.to_string());
+                info.insert("read_end".into(), end.to_string());
+            } else {
+                info.remove("read_to");
+                info.remove("read_end");
+            }
+            let detail = if unread {
+                Some(format!("read to page {} of {total}", read.end))
+            } else if end < total {
+                Some(format!("the first {end} of {total} pages"))
+            } else {
+                None
+            };
+            self.store.finish(
+                file.id,
+                if unread { "partial" } else { "done" },
+                detail.as_deref(),
+                &info,
+            )
+        })?;
+        let ocr = pages.iter().filter(|page| page.ocr).count();
+        let span = if later {
+            format!("pages {}–{} of {total}", read.start + 1, read.end)
+        } else {
+            format!("{}/{total} pages", pages.len())
+        };
+        let mut note = format!("{span}, {} as images", image_pages.len());
+        if ocr > 0 {
+            note += &format!(", {ocr} read by OCR");
+        }
+        Ok((if unread { "partial" } else { "done" }.into(), Some(note)))
+    }
+
+    fn audio(&mut self, file: &FileRecord, pieces: &[Piece], duration: f64) -> Result<Outcome> {
+        if pieces.is_empty() {
+            self.store
+                .finish(file.id, "skipped", Some("silent or shorter than 2 s"), &Info::new())?;
+            return Ok(("skipped".into(), Some("silent or too short".into())));
+        }
+        let paths: Vec<String> = pieces.iter().map(|piece| piece.path.clone()).collect();
+        let vectors = self.full_worker()?.embed_audio(&paths)?;
+        self.store.transaction(|_| {
+            for (piece, embedding) in pieces.iter().zip(&vectors) {
+                self.store.add_segment(
+                    file.id,
+                    SegmentKind::Audio,
+                    Modality::Audio,
+                    Some(piece.start),
+                    Some(piece.end),
+                    None,
+                    None,
+                    embedding.vector.as_deref(),
+                )?;
+            }
+            self.store.finish(
+                file.id,
+                "done",
+                None,
+                &Info::from([("duration".into(), format!("{duration:.1}"))]),
+            )
+        })?;
+        Ok((
+            "done".into(),
+            Some(format!("{} windows, {} s", pieces.len(), duration as i64)),
+        ))
+    }
+
+    fn video(&mut self, file: &FileRecord, frames: &[Piece], sound: &[Piece], duration: f64) -> Result<Outcome> {
+        if frames.is_empty() && sound.is_empty() {
+            self.store
+                .finish(file.id, "skipped", Some("no frames or sound"), &Info::new())?;
+            return Ok(("skipped".into(), Some("no frames or sound".into())));
+        }
+        let budget = self.options.frame_budget;
+        let worker = self.full_worker()?;
+        let frame_paths: Vec<String> = frames.iter().map(|piece| piece.path.clone()).collect();
+        let frame_vectors = if frame_paths.is_empty() {
+            Vec::new()
+        } else {
+            worker.embed_images(&frame_paths, budget)?
+        };
+        let sound_paths: Vec<String> = sound.iter().map(|piece| piece.path.clone()).collect();
+        let sound_vectors = if sound_paths.is_empty() {
+            Vec::new()
+        } else {
+            worker.embed_audio(&sound_paths)?
+        };
+        self.store.transaction(|_| {
+            for (pieces, vectors, kind, modality) in [
+                (frames, &frame_vectors, SegmentKind::Frame, Modality::Image),
+                (sound, &sound_vectors, SegmentKind::Audio, Modality::Audio),
+            ] {
+                for (piece, embedding) in pieces.iter().zip(vectors) {
+                    self.store.add_segment(
+                        file.id,
+                        kind,
+                        modality,
+                        Some(piece.start),
+                        Some(piece.end),
+                        None,
+                        None,
+                        embedding.vector.as_deref(),
+                    )?;
+                }
+            }
+            let info = Info::from([
+                ("duration".into(), format!("{duration:.1}")),
+                ("frames".into(), frames.len().to_string()),
+                ("sound_windows".into(), sound.len().to_string()),
+            ]);
+            self.store.finish(file.id, "done", None, &info)
+        })?;
+        Ok((
+            "done".into(),
+            Some(format!(
+                "{} frames, {} sound windows, {} s",
+                frames.len(),
+                sound.len(),
+                duration as i64
+            )),
+        ))
+    }
+}
+
+/// One folder per indexer, under one per process (`digger-<pid>`).
+fn scratch_folder() -> PathBuf {
+    static INDEXERS: AtomicUsize = AtomicUsize::new(0);
+    let number = INDEXERS.fetch_add(1, Ordering::Relaxed);
+    paths::scratch_root()
+        .join(format!("digger-{}", std::process::id()))
+        .join(format!("indexer-{number}"))
+}
+
+/// Pictures go to the model 8 at a time (of one kind); other files one by one.
+fn batches(queue: &[FileRecord]) -> Vec<Vec<FileRecord>> {
+    let mut batches: Vec<Vec<FileRecord>> = Vec::new();
+    for file in queue {
+        let picture = matches!(file.kind, FileKind::Image | FileKind::Screenshot);
+        match batches.last_mut() {
+            Some(last) if picture && last.len() < 8 && last[0].kind == file.kind => last.push(file.clone()),
+            _ => batches.push(vec![file.clone()]),
+        }
+    }
+    batches
 }
 
 // Prepare (any thread: files only, no database, no model)
 
-fn prepare(job: Job, options: &IndexOptions) -> Prepared {
+fn prepare(job: Job, options: &IndexOptions, folder: &Path) -> Prepared {
     let Job { files: batch, step } = job;
+    let _ = std::fs::create_dir_all(folder);
     let mut prepared = Prepared {
         batch,
+        folder: folder.to_path_buf(),
         step,
         outcomes: HashMap::new(),
         payload: Payload::Nothing,
@@ -666,7 +1074,74 @@ fn prepare(job: Job, options: &IndexOptions) -> Prepared {
             }
         }),
         FileKind::Code => code::read(&path, options).map(Payload::Code),
-        other => Err(ExtractError::Unreadable(format!("{other} files aren't read yet"))),
+        FileKind::Image | FileKind::Screenshot => {
+            let screenshot = prepared.batch[0].kind == FileKind::Screenshot;
+            let mut ready = Vec::new();
+            for (slot, file) in prepared.batch.iter().enumerate() {
+                let source = Path::new(&file.path);
+                let out = folder.join(format!("{slot}.{}", if screenshot { "png" } else { "jpg" }));
+                let max_pixel = if screenshot { 1536 } else { 1024 };
+                match images::prepare(source, max_pixel, options.min_image_side, &out, screenshot) {
+                    Ok(image) => {
+                        let ocr = if screenshot {
+                            images::ocr::text(source, folder)
+                        } else {
+                            String::new()
+                        };
+                        ready.push(ReadyImage { slot, image, ocr });
+                    }
+                    Err(error @ (ExtractError::TooSmall(..) | ExtractError::LeftOut(_))) => {
+                        prepared.outcomes.insert(slot, ("skipped".into(), error.to_string()));
+                    }
+                    Err(error) => {
+                        prepared.outcomes.insert(slot, ("failed".into(), error.to_string()));
+                    }
+                }
+            }
+            Ok(Payload::Images { screenshot, ready })
+        }
+        FileKind::Pdf => {
+            // Long PDFs (books) get their first pages now and the rest after everything else.
+            let mut wanted = 0..0;
+            let step = prepared.step.clone();
+            pdf::pages(
+                &path,
+                |total| {
+                    let range = step.unwrap_or(if total > options.big_pdf_pages {
+                        0..options.pdf_step
+                    } else {
+                        0..options.max_pages
+                    });
+                    wanted = clamp(range, total.min(options.max_pages));
+                    wanted.clone()
+                },
+                options.min_page_text,
+                1400,
+                folder,
+            )
+            .map(|read| Payload::Pdf {
+                pages: read.pages,
+                read: wanted.clone(),
+                total: read.total,
+                title: read.title,
+            })
+        }
+        FileKind::Audio => media::audio_windows(&path, options.audio_window, options.audio_hop, folder)
+            .map(|(pieces, duration)| Payload::Audio { pieces, duration }),
+        FileKind::Video => {
+            media::keyframes(&path, options.frame_interval, 1024, 1200, folder).and_then(|(frames, duration, audio)| {
+                let sound = if audio {
+                    media::audio_windows(&path, options.audio_window, options.audio_hop, folder)?.0
+                } else {
+                    Vec::new()
+                };
+                Ok(Payload::Video {
+                    frames,
+                    sound,
+                    duration,
+                })
+            })
+        }
     };
     match read {
         Ok(payload) => prepared.payload = payload,
@@ -675,7 +1150,10 @@ fn prepare(job: Job, options: &IndexOptions) -> Prepared {
         }
         Err(error) => {
             for slot in 0..prepared.batch.len() {
-                prepared.outcomes.insert(slot, ("failed".into(), error.to_string()));
+                prepared
+                    .outcomes
+                    .entry(slot)
+                    .or_insert(("failed".into(), error.to_string()));
             }
         }
     }
@@ -721,12 +1199,33 @@ mod tests {
                 .collect())
         }
 
-        fn embed_images(&mut self, _: &[String], _: u32) -> std::result::Result<Vec<Embedding>, WorkerError> {
-            Err(WorkerError::Failed("no images here".into()))
+        fn embed_images(&mut self, paths: &[String], _: u32) -> std::result::Result<Vec<Embedding>, WorkerError> {
+            self.media(paths)
         }
 
-        fn embed_audio(&mut self, _: &[String]) -> std::result::Result<Vec<Embedding>, WorkerError> {
-            Err(WorkerError::Failed("no audio here".into()))
+        fn embed_audio(&mut self, paths: &[String]) -> std::result::Result<Vec<Embedding>, WorkerError> {
+            self.media(paths)
+        }
+    }
+
+    impl FakeEmbedder {
+        /// A vector for each file that's there (as made from its name), and an error for one that isn't.
+        fn media(&mut self, paths: &[String]) -> std::result::Result<Vec<Embedding>, WorkerError> {
+            let vectors = self.embed_texts(paths)?;
+            Ok(paths
+                .iter()
+                .zip(vectors)
+                .map(|(path, vector)| match Path::new(path).exists() {
+                    true => Embedding {
+                        vector: Some(vector),
+                        error: None,
+                    },
+                    false => Embedding {
+                        vector: None,
+                        error: Some(format!("no file {path}")),
+                    },
+                })
+                .collect())
         }
     }
 
@@ -914,5 +1413,121 @@ mod tests {
             other.check_model(),
             Err(IndexError::FingerprintMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn pictures_pdfs_recordings_and_videos() {
+        let tools = crate::pdf::pdfium().is_some()
+            && images::ocr::languages().is_some()
+            && std::process::Command::new("ffmpeg").arg("-version").output().is_ok();
+        if !tools {
+            eprintln!("skipped: needs pdfium, tesseract and ffmpeg");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("files");
+        fs::create_dir_all(&root).unwrap();
+        // A photo, an icon (too small), a screenshot of an error, a PDF with a text page and a blank one, a
+        // recording with a tone, and a video.
+        let photo = image::RgbImage::from_fn(1600, 1200, |x, y| image::Rgb([(x % 256) as u8, (y % 256) as u8, 90]));
+        image::DynamicImage::ImageRgb8(photo)
+            .save(root.join("IMG_0001.jpg"))
+            .unwrap();
+        image::DynamicImage::ImageRgb8(image::RgbImage::new(48, 48))
+            .save(root.join("icon.png"))
+            .unwrap();
+        let shot = dir.path().join("shot.pdf");
+        crate::pdf::write_test_pdf(
+            &shot,
+            &[vec!["Payment declined", "Error code K7Q2LM: the card has expired."]],
+        );
+        let page = crate::pdf::pages(&shot, |total| 0..total, 10_000, 1600, dir.path())
+            .unwrap()
+            .pages
+            .remove(0);
+        fs::copy(
+            page.image_path.unwrap(),
+            root.join("Screenshot 2026-10-11 at 21.00.00.png"),
+        )
+        .unwrap();
+        let clause = "Pets: one cat is allowed in the flat, but no dogs, birds or reptiles of any kind.";
+        crate::pdf::write_test_pdf(
+            &root.join("lease.pdf"),
+            &[vec!["Lease", clause, clause, clause], vec![]],
+        );
+        let tone: Vec<i16> = (0..40 * media::SAMPLE_RATE)
+            .map(|i| ((i as f64 * 440.0 * std::f64::consts::TAU / media::SAMPLE_RATE as f64).sin() * 8000.0) as i16)
+            .collect();
+        media::write_wav(&tone, &root.join("talk.wav")).unwrap();
+        let made = std::process::Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=s=640x360:d=8:r=25",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=f=440:d=8",
+            ])
+            .args(["-pix_fmt", "yuv420p", "-shortest"])
+            .arg(root.join("clip.mp4"))
+            .status()
+            .unwrap();
+        assert!(made.success());
+
+        let store = IndexStore::open_main(&dir.path().join("index")).unwrap();
+        let mut indexer = Indexer::new(&store, IndexOptions::default(), fake(Rc::new(Cell::new(0))));
+        indexer.sync(std::slice::from_ref(&root)).unwrap();
+        let mut events = Vec::new();
+        let states = indexer
+            .run(None, None, &mut || false, &mut |event| events.push(event.clone()))
+            .unwrap();
+        assert_eq!(
+            states,
+            BTreeMap::from([("done".into(), 5), ("skipped".into(), 1)]),
+            "{events:#?}"
+        );
+        let kind = |name: &str| events.iter().find(|event| event.path.ends_with(name)).unwrap();
+        assert_eq!(kind("icon.png").state, "skipped");
+        assert_eq!(kind("Screenshot 2026-10-11 at 21.00.00.png").kind, FileKind::Screenshot);
+        // The screenshot's words and the PDF's text are found by keyword search, at their place.
+        let mut searcher = Searcher::new(&store, true).unwrap();
+        let options = SearchOptions::default();
+        let shot = searcher.search("K7Q2LM", None, &options).unwrap();
+        assert!(shot[0].path.ends_with(".png"), "{shot:?}");
+        let lease = searcher.search("reptiles", None, &options).unwrap();
+        assert_eq!((lease[0].segment, lease[0].loc), (SegmentKind::Page, Some(1.0)));
+        // The blank page went to the model as a picture; the recording and the video as windows and frames.
+        let count = |sql: &str| store.db.query_row(sql, [], |row| row.get::<_, i64>(0)).unwrap();
+        assert_eq!(
+            count("SELECT COUNT(*) FROM segments WHERE kind = 'page_image' AND vec IS NOT NULL"),
+            1
+        );
+        assert_eq!(
+            count(
+                "SELECT COUNT(*) FROM segments WHERE kind = 'audio' AND file = (SELECT id FROM files WHERE path LIKE '%talk.wav')"
+            ),
+            2
+        );
+        assert!(count("SELECT COUNT(*) FROM segments WHERE kind = 'frame'") >= 1);
+        assert_eq!(
+            count(
+                "SELECT COUNT(*) FROM segments WHERE kind = 'audio' AND file = (SELECT id FROM files WHERE path LIKE '%clip.mp4')"
+            ),
+            1
+        );
+        let photo = store.files_under(&[crate::crawler::standardized(&root)]).unwrap();
+        let photo = photo.iter().find(|file| file.path.ends_with("IMG_0001.jpg")).unwrap();
+        assert_eq!(
+            store.info(photo.id).unwrap().get("width").map(String::as_str),
+            Some("1600")
+        );
+        // Nothing is left in the scratch folder.
+        let scratch = indexer.scratch.clone();
+        drop(indexer);
+        assert!(!scratch.exists());
     }
 }

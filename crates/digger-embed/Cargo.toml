@@ -13,7 +13,7 @@ cuda = ["llama-sys/cuda"]
 digger-core = { path = "../digger-core" }
 llama-sys = { path = "../llama-sys" }
 sha2 = "0.11"
-ureq = "3"
+ureq = { version = "3", features = ["platform-verifier"] }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }

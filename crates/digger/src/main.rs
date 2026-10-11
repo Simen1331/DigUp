@@ -11,6 +11,7 @@ use digger_core::embedder::Embedder;
 use digger_core::indexer::Indexer;
 use digger_core::model::SegmentKind;
 use digger_core::model::{FileKind, IndexOptions, code_query, prompts};
+use digger_core::pdf;
 use digger_core::searcher::{SearchHit, SearchOptions, Searcher, strong_count};
 use digger_core::store::IndexStore;
 use digger_embed::{LlamaEmbedder, LlamaModels, llama, models};
@@ -287,23 +288,85 @@ fn states_line(states: &BTreeMap<String, usize>) -> String {
 
 fn download() -> Result<()> {
     let folder = models::installed();
-    let missing = models::missing(&folder);
-    if missing.is_empty() {
+    if models::missing(&folder).is_empty() {
         println!("the model is in {}", folder.display());
+    } else {
+        let mut last = (String::new(), 0u64);
+        models::download(&folder, &mut |file, have, total| {
+            let percent = have * 100 / total.max(1);
+            if file.name != last.0 || percent != last.1 {
+                eprint!("\r{}  {percent}% of {} MB   ", file.name, total >> 20);
+                last = (file.name.to_string(), percent);
+            }
+        })
+        .map_err(anyhow::Error::msg)?;
+        eprintln!();
+        println!("the model is in {}", folder.display());
+    }
+    download_pdfium()?;
+    for (tool, package, what) in [
+        ("ffmpeg", "ffmpeg", "recordings and videos"),
+        (
+            "tesseract",
+            "tesseract tesseract-data-eng tesseract-data-nor",
+            "the words in screenshots",
+        ),
+    ] {
+        if !have(tool) {
+            println!("for {what}, install {tool}: sudo pacman -S {package}");
+        }
+    }
+    Ok(())
+}
+
+/// Whether a command-line tool is installed.
+fn have(tool: &str) -> bool {
+    std::process::Command::new(tool)
+        .arg(if tool == "tesseract" { "--version" } else { "-version" })
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+/// pdfium, the PDF library Chrome uses, from bblanchon/pdfium-binaries at the build pdfium-render speaks to, checked
+/// against its SHA-256. A copy from `$DIGGER_PDFIUM` or the system works too.
+fn download_pdfium() -> Result<()> {
+    use sha2::Digest;
+    let target = pdf::installed_library();
+    if target.exists() {
+        println!("pdfium is in {}", target.display());
         return Ok(());
     }
-    let mut last = (String::new(), 0u64);
-    models::download(&folder, &mut |file, have, total| {
-        let percent = have * 100 / total.max(1);
-        if file.name != last.0 || percent != last.1 {
-            eprint!("\r{}  {percent}% of {} MB   ", file.name, total >> 20);
-            last = (file.name.to_string(), percent);
+    let url = format!(
+        "https://github.com/bblanchon/pdfium-binaries/releases/download/{}/{}",
+        pdf::PDFIUM_RELEASE.replace('/', "%2F"),
+        pdf::PDFIUM_ARCHIVE
+    );
+    eprintln!("downloading pdfium ({})", pdf::PDFIUM_RELEASE);
+    let mut archive = Vec::new();
+    std::io::Read::read_to_end(
+        &mut models::agent().get(&url).call()?.into_body().into_reader(),
+        &mut archive,
+    )?;
+    let sum: String = sha2::Sha256::digest(&archive)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    if sum != pdf::PDFIUM_SHA256 {
+        bail!("pdfium didn't arrive whole (its checksum is {sum}); run it again");
+    }
+    let mut entries = tar::Archive::new(flate2::read::GzDecoder::new(archive.as_slice()));
+    for entry in entries.entries()? {
+        let mut entry = entry?;
+        if entry.path()?.ends_with("lib/libpdfium.so") {
+            std::fs::create_dir_all(target.parent().unwrap())?;
+            let part = target.with_extension("so.part");
+            entry.unpack(&part)?;
+            std::fs::rename(&part, &target)?;
+            println!("pdfium is in {}", target.display());
+            return Ok(());
         }
-    })
-    .map_err(anyhow::Error::msg)?;
-    eprintln!();
-    println!("the model is in {}", folder.display());
-    Ok(())
+    }
+    bail!("no libpdfium.so in {}", pdf::PDFIUM_ARCHIVE)
 }
 
 /// The embedder for indexing: the whole model, with its log in the index folder.
@@ -352,9 +415,23 @@ fn index_folders(folders: &[PathBuf], args: &IndexArgs, limit: Option<usize>, re
     for (folder, count) in &sync.crawl.datasets {
         println!("looks like a dataset (skipped): {} ({count} files)", tilde(folder));
     }
+    // What can't be read without a tool stays pending until it's installed.
+    if pdf::pdfium().is_none() {
+        indexer.kinds.retain(|kind| *kind != FileKind::Pdf);
+        println!("PDFs wait for pdfium: digger download");
+    }
+    if !have("ffmpeg") {
+        indexer
+            .kinds
+            .retain(|kind| !matches!(kind, FileKind::Audio | FileKind::Video));
+        println!("recordings and videos wait for ffmpeg: sudo pacman -S ffmpeg");
+    }
+    if !have("tesseract") {
+        println!("screenshots are read without their words: sudo pacman -S tesseract tesseract-data-eng");
+    }
     let waiting = store.pending_count()? - store.pending(None, None, Some(&indexer.kinds))?.len();
     if waiting > 0 {
-        println!("{waiting} pictures, PDFs, recordings and videos wait for a later version of Digger");
+        println!("{waiting} files wait for those");
     }
 
     let started = Instant::now();

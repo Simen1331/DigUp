@@ -47,10 +47,10 @@ Prosesser på Linux:
 | llama.cpp med Metal | llama.cpp med **Vulkan** (AMD, Intel og NVIDIA), valgfritt CUDA, CPU som reserve |
 | SQLite3 (system) | `rusqlite` med `bundled` (FTS5 er med) |
 | ImageIO (HEIC, RAW, EXIF-rotasjon) | `image` + `kamadak-exif`; HEIC via `libheif-rs`; RAW via `rawloader` eller `libraw` |
-| Vision OCR | Tesseract (`leptess`) eller `ocrs` (ren Rust). Språkdekningen blir en annen enn Apples ~25 språk. |
+| Vision OCR | Tesseract som underprosess, med de installerte språkene blant engelsk, norsk, dansk, svensk, tysk, fransk, spansk, bengali og arabisk (`$DIGGER_OCR_LANGS` overstyrer). |
 | PDFKit (tekst + rendering) | `pdfium-render` (libpdfium) |
 | NSAttributedString (rtf/doc/docx/odt/html) | docx/odt: zip + `quick-xml`; rtf: egen enkel parser; html: eksisterende `plainText(fromHTML:)`-logikk; .doc: `antiword`/`catdoc` hvis installert |
-| AVFoundation (lydvinduer, videorammer) | `ffmpeg` som underprosess (PCM 16 kHz ut, rammer som PNG) |
+| AVFoundation (lydvinduer, videorammer) | `ffmpeg`/`ffprobe` som underprosess: PCM 16 kHz ut i 30 s-vinduer, ett bilde hvert 3. sekund, nesten like bilder droppet (average hash) |
 | FSEvents | `notify` (inotify). NB: `fs.inotify.max_user_watches` for store trær. |
 | Accelerate (prikkprodukt) | ren Rust, autovektorisert over f16→f32 (`half`) |
 | CryptoKit | `sha2` |
@@ -100,18 +100,19 @@ Fase 0–3 kan bygges og testes i skyen, i denne Linux-containeren. GUI-en og Vu
 ## Status
 
 - **Fase 0: ferdig.** Workspace, `llama-sys` (llama.cpp b11461 med patchen, CPU og Vulkan), `digger info` og CI (`.github/workflows/rust.yml`).
-- **Fase 1: kode skrevet, venter på modellen.** `digger-core` (regler, crawler, mappevalg, indeks med DigUps skjema 5, søk, indeksering av dokumenter og kode, lange filer i to omganger), `digger-embed` (llama.cpp-embedder for tekst, bilder og lyd, nedlasting av modellen) og CLI-en `digger download / index / search / status / eval`. 61 tester passerer. Det som gjenstår, er å kjøre referansevektortesten og evalene med den ekte modellen: skyøkta får ikke laste ned fra Hugging Face.
-  - Bilder, PDF-er, lyd og video blir funnet og står i kø (`pending`) til fase 2 lærer Digger å lese dem.
+- **Fase 1: ferdig.** `digger-core` (regler, crawler, mappevalg, indeks med DigUps skjema 5, søk, indeksering av dokumenter og kode, lange filer i to omganger), `digger-embed` (llama.cpp-embedder for tekst, bilder og lyd, nedlasting av modellen) og CLI-en `digger download / index / search / status / eval`. Referansevektorene stemmer med DigUps på CPU (cosinus 0,9998–0,9999).
+- **Fase 2: ferdig, testet på CPU.** Bilder (JPEG, PNG, WebP, HEIC, AVIF, GIF, BMP, TIFF; rotasjon og opptaksdato fra EXIF), tekst i skjermbilder med Tesseract, PDF-er med pdfium (tekst side for side, skannede sider som bilder, ødelagt bengalsk/arabisk tekst, lange PDF-er i to omganger), lyd og video med ffmpeg. RAW-bilder hoppes over foreløpig. `digger download` henter også pdfium. Mangler pdfium eller ffmpeg, venter PDF-er eller lyd og video i køen; mangler Tesseract, leses skjermbilder uten ordene.
   - .doc leses med `antiword` eller `catdoc` hvis en av dem er installert.
 
 Bygg selv på Omarchy:
 
 ```sh
 sudo pacman -S --needed rust cmake clang vulkan-headers vulkan-icd-loader spirv-headers shaderc   # shaderc gir glslc
+sudo pacman -S --needed libheif ffmpeg tesseract tesseract-data-eng tesseract-data-nor
 scripts/fetch-llama.sh
 cargo build --release --features vulkan
 target/release/digger info    # skal vise RTX 3060 som Vulkan-enhet
-target/release/digger download
+target/release/digger download   # modellen (865 MB) og pdfium
 cargo test --release --features vulkan -p digger-embed -- --nocapture   # referansevektorene: cosinus ≥ 0,999
 target/release/digger index ~/Documents
 target/release/digger search "leieavtale om husdyr"

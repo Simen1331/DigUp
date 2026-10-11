@@ -22,9 +22,19 @@ jobs:
         features: ["", "vulkan"]
     steps:
       - uses: actions/checkout@v4
+      # libheif to build; pdfium, Tesseract and ffmpeg so the tests that read PDFs, screenshots, recordings and videos
+      # run rather than skip.
+      - name: Libraries and tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libheif-dev tesseract-ocr ffmpeg
+          curl -sSLo pdfium.tgz https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7881/pdfium-linux-x64.tgz
+          echo "1470e21b8b4a3b4ad7f85684e2da11d94f3b69a86d81dee11b9b6709d927ac1d  pdfium.tgz" | sha256sum -c
+          mkdir -p ~/.local/share/digger/lib
+          tar xzf pdfium.tgz -C ~/.local/share/digger/lib --strip-components=1 lib/libpdfium.so
       - name: Vulkan headers and shader compiler
         if: matrix.features == 'vulkan'
-        run: sudo apt-get update -q && sudo apt-get install -y -q libvulkan-dev glslc spirv-headers
+        run: sudo apt-get install -y -q libvulkan-dev glslc spirv-headers
       - run: scripts/fetch-llama.sh
       - uses: actions/cache@v4
         with:

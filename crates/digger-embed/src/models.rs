@@ -48,13 +48,7 @@ pub struct LlamaModels {
     pub media: Option<PathBuf>,
 }
 
-/// Digger's data folder: `$XDG_DATA_HOME/digger`, or ~/.local/share/digger.
-pub fn data_folder() -> PathBuf {
-    match std::env::var_os("XDG_DATA_HOME").filter(|value| !value.is_empty()) {
-        Some(data) => PathBuf::from(data).join("digger"),
-        None => PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share/digger"),
-    }
-}
+pub use digger_core::paths::data_folder;
 
 /// Where Digger keeps the model.
 pub fn installed() -> PathBuf {
@@ -130,6 +124,15 @@ pub fn sha256(path: &Path) -> std::io::Result<String> {
     Ok(hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+/// The HTTP client for downloads. It trusts the system's certificates (what the browser trusts, a company proxy's
+/// included), not only the public roots built into the program.
+pub fn agent() -> ureq::Agent {
+    let tls = ureq::tls::TlsConfig::builder()
+        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+        .build();
+    ureq::Agent::config_builder().tls_config(tls).build().new_agent()
+}
+
 /// Downloads the missing files into `folder`, going on from a `.part` left by an interrupted download, and checks
 /// each against its SHA-256 before giving it its name. `progress` hears (file, bytes so far, its size).
 pub fn download(folder: &Path, progress: &mut dyn FnMut(&ModelFile, u64, u64)) -> Result<(), String> {
@@ -152,7 +155,8 @@ pub fn download(folder: &Path, progress: &mut dyn FnMut(&ModelFile, u64, u64)) -
             have = 0;
         }
         if have < file.bytes {
-            let mut request = ureq::get(&file.url());
+            let agent = agent();
+            let mut request = agent.get(&file.url());
             if have > 0 {
                 request = request.header("Range", &format!("bytes={have}-"));
             }

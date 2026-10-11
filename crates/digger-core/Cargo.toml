@@ -5,8 +5,17 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["heif"]
+# HEIC/HEIF photos (iPhones and Samsung phones), through libheif.
+heif = ["dep:libheif-rs"]
+
 [dependencies]
 half = "2.7"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp", "tiff", "avif-native"] }
+kamadak-exif = "0.6"
+libheif-rs = { version = "3", optional = true, default-features = false, features = ["v1_17"] }
+pdfium-render = { version = "0.9", default-features = false, features = ["pdfium_7881", "image_025", "thread_safe"] }
 regex = "1.13"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
