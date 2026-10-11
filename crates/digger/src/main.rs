@@ -45,6 +45,16 @@ enum Command {
         #[arg(long)]
         reindex: bool,
     },
+    /// How long the first pass over folders takes (the configured ones when none are given), without reading them.
+    Estimate {
+        folders: Vec<PathBuf>,
+        /// What code search would read there.
+        #[arg(long)]
+        code: bool,
+        /// One line of JSON per folder.
+        #[arg(long)]
+        json: bool,
+    },
     /// Searches the index. "code: <words>" searches the code index.
     Search {
         words: Vec<String>,
@@ -229,8 +239,54 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::Resume => daemon_command(&Request::Resume),
         Command::Reload => daemon_command(&Request::Reload),
+        Command::Estimate { folders, code, json } => estimate(folders, code, json),
         Command::Eval { file, index, tuning, n } => evaluate(&file, &index, &tuning, n),
     }
+}
+
+/// Each folder's estimate, as it's made.
+fn estimate(folders: Vec<PathBuf>, code: bool, json: bool) -> Result<()> {
+    use digger_core::estimator;
+    let config = config::Config::load()?;
+    let (configured, mut options) = if code { config.code() } else { config.main() };
+    options.code = code;
+    let folders: Vec<PathBuf> = if folders.is_empty() {
+        configured
+    } else {
+        folders.iter().map(|folder| digger_core::settings::expand(&folder.to_string_lossy())).collect()
+    };
+    if folders.is_empty() {
+        bail!("no folders: name some, or add them with `digger add`");
+    }
+    let mut all = estimator::Estimate::default();
+    for folder in &folders {
+        let report = digger_core::crawler::crawl(std::slice::from_ref(folder), &options);
+        let estimate = estimator::estimate(&report.candidates, &options, &estimator::Costs::default());
+        if json {
+            let mut line = serde_json::to_value(&estimate)?;
+            line["folder"] = folder.to_string_lossy().into();
+            println!("{line}");
+        } else if estimate.files.is_empty() {
+            println!("{}: nothing to read", folder.display());
+        } else {
+            let files: Vec<String> = estimate.files.iter().map(|(kind, count)| format!("{count} {kind}")).collect();
+            let mut line =
+                format!("{}: {} ({})", folder.display(), estimator::approximately(estimate.seconds), files.join(", "));
+            if estimate.later_seconds > 0.0 {
+                let later = estimator::rough_duration(estimate.later_seconds);
+                line.push_str(&format!(", then {later} for the rest of {} long files", estimate.long_files));
+            }
+            if code {
+                line.push_str(&format!(", index ≈ {}", estimator::rough_bytes(estimate.bytes)));
+            }
+            println!("{line}");
+        }
+        all += estimate;
+    }
+    if !json && folders.len() > 1 {
+        println!("all: {}", estimator::approximately(all.seconds));
+    }
+    Ok(())
 }
 
 // Formatting

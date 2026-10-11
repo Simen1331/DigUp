@@ -28,7 +28,7 @@ impl Welcome {
         let page = page();
         page.append(&heading("Welcome to Digger"));
         page.append(&note(
-            "Digger finds your files by what's in them: a photo by what's in it, a PDF by what it says, a recording by what was said. Everything is read on this computer, and nothing leaves it.\n\nIt reads with EmbeddingGemma, a model of about 1.3 GB that it downloads once.",
+            "Digger finds your files by what's in them: a photo by what's in it, a PDF by what it says, a recording by what was said. Everything is read on this computer, and nothing leaves it.\n\nIt reads with EmbeddingGemma, a model of about 865 MB that it downloads once.",
         ));
         let state = gtk::Label::builder().xalign(0.0).wrap(true).build();
         let progress = gtk::ProgressBar::builder().show_text(true).visible(false).build();

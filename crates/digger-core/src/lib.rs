@@ -3,6 +3,7 @@
 pub mod code;
 pub mod crawler;
 pub mod embedder;
+pub mod estimator;
 pub mod extract;
 pub mod folder_selection;
 pub mod images;

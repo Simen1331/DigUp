@@ -7,9 +7,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use digger_core::crawler;
 use digger_core::folder_selection::{FolderSelection, Mark};
 use digger_core::model::{FileKind, IndexOptions};
+use digger_core::{crawler, estimator};
 use gtk::prelude::*;
 use gtk::{gio, glib, pango};
 
@@ -102,7 +102,10 @@ fn contents(folder: &str, code: bool) -> String {
     parts.sort_by_key(|part| std::cmp::Reverse(part.1));
     let part =
         |((one, many), count): &((&str, &str), usize)| format!("{count} {}", if *count == 1 { one } else { many });
-    parts.iter().map(part).collect::<Vec<_>>().join(" · ")
+    let mut text = parts.iter().map(part).collect::<Vec<_>>().join(" · ");
+    let estimate = estimator::estimate(&report.candidates, &options, &estimator::Costs::default());
+    text.push_str(&format!("  —  {} to read", estimator::approximately(estimate.seconds + estimate.later_seconds)));
+    text
 }
 
 impl FolderPicker {

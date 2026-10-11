@@ -103,13 +103,22 @@ Fase 0–3 kan bygges og testes i skyen, i denne Linux-containeren. GUI-en og Vu
 - **Fase 1: ferdig.** `digger-core` (regler, crawler, mappevalg, indeks med DigUps skjema 5, søk, indeksering av dokumenter og kode, lange filer i to omganger), `digger-embed` (llama.cpp-embedder for tekst, bilder og lyd, nedlasting av modellen) og CLI-en `digger download / index / search / status / eval`. Referansevektorene stemmer med DigUps på CPU (cosinus 0,9998–0,9999).
 - **Fase 2: ferdig, testet på CPU.** Bilder (JPEG, PNG, WebP, HEIC, AVIF, GIF, BMP, TIFF; rotasjon og opptaksdato fra EXIF), tekst i skjermbilder med Tesseract, PDF-er med pdfium (tekst side for side, skannede sider som bilder, ødelagt bengalsk/arabisk tekst, lange PDF-er i to omganger), lyd og video med ffmpeg. RAW-bilder hoppes over foreløpig. `digger download` henter også pdfium. Mangler pdfium eller ffmpeg, venter PDF-er eller lyd og video i køen; mangler Tesseract, leses skjermbilder uten ordene.
   - .doc leses med `antiword` eller `catdoc` hvis en av dem er installert.
-- **Fase 3: ferdig, testet i skyen.** `digger daemon` indekserer mappene i `~/.config/digger/config.toml` og svarer på søk over `$XDG_RUNTIME_DIR/digger.sock` (JSON-linjer, se `crates/digger/src/protocol.rs`). Nye filer indekseres sekunder etter at de lagres (inotify), koden etter 60 s ro. Den store gjennomgangen venter i power-saver-modus og på batteri hvis du har slått det av. Modellen slippes etter 60 s uten arbeid, søkemodellen etter 10 min uten søk. Mapper som forsvinner (en USB-disk), beholder filene sine i indeksen. Kommandoer: `digger add/remove <mappe> [--code]`, `pause`, `resume`, `reload`, `status --waybar [--follow]`. `digger search` går via daemonen når den kjører (64 ms med varm modell). Filer i `packaging/`: systemd-enhet og Waybar-modul.
-- **Fase 4: planlagt** i `docs/frontend-plan.md`.
+- **Fase 3: ferdig, testet i skyen.** `digger daemon` indekserer mappene i `~/.config/digger/config.toml` og svarer på søk over `$XDG_RUNTIME_DIR/digger.sock` (JSON-linjer, se `crates/digger-core/src/proto.rs`). Nye filer indekseres sekunder etter at de lagres (inotify), koden etter 60 s ro. Den store gjennomgangen venter i power-saver-modus og på batteri hvis du har slått det av. Modellen slippes etter 60 s uten arbeid, søkemodellen etter 10 min uten søk. Mapper som forsvinner (en USB-disk), beholder filene sine i indeksen. Kommandoer: `digger add/remove <mappe> [--code]`, `pause`, `resume`, `reload`, `status --waybar [--follow]`. `digger search` går via daemonen når den kjører (64 ms med varm modell). Filer i `packaging/`: systemd-enhet og Waybar-modul.
+- **Fase 4: ferdig i skyen, venter på test på desktop.** Plan og idéer: `docs/frontend-plan.md`.
+  - `digger-panel`: GTK4-panel med layer-shell over vinduene (som Walker), i Omarchy-temaets farger (følger temabytte). Ordtreff mens du skriver, meningssøk når du stopper; resultater gruppert etter type; forhåndsvisning med bilde, PDF-side med ordene markert, video og lyd som spilles av fra treffet, og kode med linjenumre. Taster: ↑↓/Ctrl+J/K, Enter åpner der det traff, Space spiller, Ctrl+C kopierer filen, Ctrl+O det store vinduet, Alt+1–7 filtrerer, Ctrl+, innstillinger.
+  - `digger-panel --window`: stort søkevindu med rutenett og filtre.
+  - `digger-panel --settings`: mapper (med «delvis valgt» for undermapper og estimert tid), lesing og OCR-språk, kode og editor, åpning og utseende, strøm og minne, status med pause og synk. Lagrer mens du endrer og ber daemonen lese på nytt.
+  - `digger-panel --setup` (åpnes av seg selv første gang): starter tjenestene, laster ned modellen med fremdrift, velger mapper og kodemapper, sjekker programmer (med `pacman`-linje å kopiere), og legger til tast i Hyprland og modul i Waybar med «Add for me» (tar sikkerhetskopi først) eller kopier selv.
+  - Waybar-modulen er skjult når alt er lest, viser fremdrift ellers; klikk søker, midtklikk pauser. Varsler med `notify-send` når en stor runde er ferdig, modellen er klar eller noe feiler.
+  - `digger estimate [--code] [--json] [mapper]`: hvor lang tid første runde tar. Kostnadene er målt på M4 Pro; de bør måles på nytt på RTX 3060.
 
 Sett opp daemonen:
 
 ```sh
 cargo install --path crates/digger --features vulkan
+cargo install --path crates/digger-panel
+digger-panel --setup      # tjenestene, modellen, mapper, tast og Waybar
+# eller for hånd:
 digger add ~/Documents ~/Pictures ~/Downloads        # og: digger add --code ~/kode
 cp packaging/digger.service ~/.config/systemd/user/
 systemctl --user daemon-reload && systemctl --user enable --now digger
@@ -120,7 +129,7 @@ Bygg selv på Omarchy:
 
 ```sh
 sudo pacman -S --needed rust cmake clang vulkan-headers vulkan-icd-loader spirv-headers shaderc   # shaderc gir glslc
-sudo pacman -S --needed libheif ffmpeg tesseract tesseract-data-eng tesseract-data-nor
+sudo pacman -S --needed libheif ffmpeg tesseract tesseract-data-eng tesseract-data-nor gtk4 gtk4-layer-shell gtksourceview5 gst-plugins-good gst-libav
 scripts/fetch-llama.sh
 cargo build --release --features vulkan
 target/release/digger info    # skal vise RTX 3060 som Vulkan-enhet
