@@ -131,6 +131,10 @@ pub struct Indexer<'a> {
 impl Drop for Indexer<'_> {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.scratch);
+        // The process's folder too, once its last indexer is gone (it fails while another one still uses it).
+        if let Some(process) = self.scratch.parent() {
+            let _ = std::fs::remove_dir(process);
+        }
     }
 }
 

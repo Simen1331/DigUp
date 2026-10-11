@@ -103,6 +103,18 @@ Fase 0–3 kan bygges og testes i skyen, i denne Linux-containeren. GUI-en og Vu
 - **Fase 1: ferdig.** `digger-core` (regler, crawler, mappevalg, indeks med DigUps skjema 5, søk, indeksering av dokumenter og kode, lange filer i to omganger), `digger-embed` (llama.cpp-embedder for tekst, bilder og lyd, nedlasting av modellen) og CLI-en `digger download / index / search / status / eval`. Referansevektorene stemmer med DigUps på CPU (cosinus 0,9998–0,9999).
 - **Fase 2: ferdig, testet på CPU.** Bilder (JPEG, PNG, WebP, HEIC, AVIF, GIF, BMP, TIFF; rotasjon og opptaksdato fra EXIF), tekst i skjermbilder med Tesseract, PDF-er med pdfium (tekst side for side, skannede sider som bilder, ødelagt bengalsk/arabisk tekst, lange PDF-er i to omganger), lyd og video med ffmpeg. RAW-bilder hoppes over foreløpig. `digger download` henter også pdfium. Mangler pdfium eller ffmpeg, venter PDF-er eller lyd og video i køen; mangler Tesseract, leses skjermbilder uten ordene.
   - .doc leses med `antiword` eller `catdoc` hvis en av dem er installert.
+- **Fase 3: ferdig, testet i skyen.** `digger daemon` indekserer mappene i `~/.config/digger/config.toml` og svarer på søk over `$XDG_RUNTIME_DIR/digger.sock` (JSON-linjer, se `crates/digger/src/protocol.rs`). Nye filer indekseres sekunder etter at de lagres (inotify), koden etter 60 s ro. Den store gjennomgangen venter i power-saver-modus og på batteri hvis du har slått det av. Modellen slippes etter 60 s uten arbeid, søkemodellen etter 10 min uten søk. Mapper som forsvinner (en USB-disk), beholder filene sine i indeksen. Kommandoer: `digger add/remove <mappe> [--code]`, `pause`, `resume`, `reload`, `status --waybar [--follow]`. `digger search` går via daemonen når den kjører (64 ms med varm modell). Filer i `packaging/`: systemd-enhet og Waybar-modul.
+- **Fase 4: planlagt** i `docs/frontend-plan.md`.
+
+Sett opp daemonen:
+
+```sh
+cargo install --path crates/digger --features vulkan
+digger add ~/Documents ~/Pictures ~/Downloads        # og: digger add --code ~/kode
+cp packaging/digger.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now digger
+digger status
+```
 
 Bygg selv på Omarchy:
 

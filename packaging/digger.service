@@ -1,0 +1,18 @@
+# Digger's daemon as a systemd user service. Installed by hand (until the PKGBUILD does it):
+#   cargo install --path crates/digger --features vulkan
+#   cp packaging/digger.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now digger
+[Unit]
+Description=Digger: search your files by what's in them
+Documentation=https://github.com/Simen1331/DigUp
+
+[Service]
+ExecStart=%h/.cargo/bin/digger daemon
+Restart=on-failure
+RestartSec=5
+# Indexing is background work: it gives way to whatever you're doing.
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target

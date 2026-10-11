@@ -169,7 +169,8 @@ impl<'a> Searcher<'a> {
         self.vectors_loaded = false;
     }
 
-    fn reload_files(&mut self) -> Result<()> {
+    /// Reads the files (and what made the vectors) again, leaving the vectors as they are.
+    pub fn reload_files(&mut self) -> Result<()> {
         self.file_kind = self.store.file_kinds()?;
         self.vector_source = self.store.meta("vector_source")?;
         Ok(())

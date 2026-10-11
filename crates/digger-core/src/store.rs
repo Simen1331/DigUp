@@ -60,7 +60,7 @@ pub struct IndexStore {
     pub db: Connection,
     /// When set, `pending`, `pending_count` and `counts` see only files under these folders: files on an unplugged
     /// drive neither fail nor count as waiting.
-    scope: Option<Vec<String>>,
+    scope: std::cell::RefCell<Option<Vec<String>>>,
 }
 
 impl IndexStore {
@@ -85,7 +85,7 @@ impl IndexStore {
             directory: directory.to_path_buf(),
             file,
             db,
-            scope: None,
+            scope: std::cell::RefCell::new(None),
         };
         store.migrate()?;
         Ok(store)
@@ -179,13 +179,18 @@ impl IndexStore {
         }
     }
 
-    pub fn set_scope(&mut self, scope: Option<Vec<String>>) {
-        self.scope = scope;
+    pub fn scope(&self) -> Option<Vec<String>> {
+        self.scope.borrow().clone()
+    }
+
+    pub fn set_scope(&self, scope: Option<Vec<String>>) {
+        *self.scope.borrow_mut() = scope;
     }
 
     /// The scope as SQL ("" when there's none) and its values.
     fn scope_sql(&self) -> (String, Vec<Value>) {
-        let Some(scope) = &self.scope else {
+        let scope = self.scope.borrow();
+        let Some(scope) = scope.as_ref() else {
             return (String::new(), Vec::new());
         };
         if scope.is_empty() {
@@ -573,7 +578,7 @@ impl IndexStore {
             }
         }
         (counts.unfinished, counts.left) = self.unfinished_count()?;
-        let in_scope = if self.scope.is_none() {
+        let in_scope = if self.scope.borrow().is_none() {
             String::new()
         } else {
             format!(" AND file IN (SELECT id FROM files WHERE 1{scope})")
@@ -688,7 +693,7 @@ mod tests {
     #[test]
     fn pending_scope_and_counts() {
         let dir = tempfile::tempdir().unwrap();
-        let mut store = IndexStore::open_main(dir.path()).unwrap();
+        let store = IndexStore::open_main(dir.path()).unwrap();
         let a = store.insert(&candidate("/A/notes.txt", 1)).unwrap();
         store.insert(&candidate("/B/plan.txt", 2)).unwrap();
         store

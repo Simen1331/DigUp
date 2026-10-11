@@ -1,0 +1,9 @@
+// Digger in Waybar: add "custom/digger" to a modules list in ~/.config/waybar/config.jsonc, and this block beside the
+// other modules. It shows how far indexing has got while it runs, and a magnifier when it's done.
+"custom/digger": {
+  "exec": "digger status --waybar --follow",
+  "return-type": "json",
+  "restart-interval": 5,
+  "on-click": "sh -c 'digger status --waybar | grep -q \"\\\"class\\\":\\\"paused\\\"\" && digger resume || digger pause'",
+  "tooltip": true
+}

@@ -15,6 +15,11 @@ use digger_core::pdf;
 use digger_core::searcher::{SearchHit, SearchOptions, Searcher, strong_count};
 use digger_core::store::IndexStore;
 use digger_embed::{LlamaEmbedder, LlamaModels, llama, models};
+use protocol::{Client, Request};
+
+mod config;
+mod daemon;
+mod protocol;
 
 #[derive(Parser)]
 #[command(
@@ -60,11 +65,37 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// What's in the index.
+    /// What's in the index, and what the daemon is doing.
     Status {
         #[command(flatten)]
         index: IndexArgs,
+        /// One line of JSON for a Waybar custom module.
+        #[arg(long)]
+        waybar: bool,
+        /// With --waybar: a new line each time it changes (Waybar's continuous mode).
+        #[arg(long)]
+        follow: bool,
     },
+    /// Indexes the folders in ~/.config/digger/config.toml and answers searches: the systemd user service.
+    Daemon,
+    /// Adds folders to search (or, with --code, to code search) and tells the daemon.
+    Add {
+        folders: Vec<PathBuf>,
+        #[arg(long)]
+        code: bool,
+    },
+    /// Stops searching folders (inside a searched one: skips them) and tells the daemon.
+    Remove {
+        folders: Vec<PathBuf>,
+        #[arg(long)]
+        code: bool,
+    },
+    /// Pauses the big first pass (new files are still indexed).
+    Pause,
+    /// Lets it go on.
+    Resume,
+    /// Makes the daemon read config.toml again.
+    Reload,
     /// Recall of known answers (see evals/; "code: …" queries search the code index).
     Eval {
         file: PathBuf,
@@ -205,7 +236,18 @@ fn run(cli: Cli) -> Result<()> {
             n,
             json,
         } => search(&words.join(" "), &index, &tuning, &kind, n, json),
-        Command::Status { index } => status(&index),
+        Command::Status {
+            index,
+            waybar: true,
+            follow,
+        } => waybar(&index, follow),
+        Command::Status { index, .. } => status(&index),
+        Command::Daemon => daemon::run(),
+        Command::Add { folders, code } => change_folders(&folders, code, true),
+        Command::Remove { folders, code } => change_folders(&folders, code, false),
+        Command::Pause => daemon_command(&Request::Pause),
+        Command::Resume => daemon_command(&Request::Resume),
+        Command::Reload => daemon_command(&Request::Reload),
         Command::Eval { file, index, tuning, n } => evaluate(&file, &index, &tuning, n),
     }
 }
@@ -319,6 +361,25 @@ fn download() -> Result<()> {
     Ok(())
 }
 
+/// The kinds this machine can read, and what's missing for the rest: what can't be read without a tool stays
+/// pending until it's installed.
+pub(crate) fn readable_kinds() -> (Vec<FileKind>, Vec<String>) {
+    let mut kinds = Indexer::READABLE.to_vec();
+    let mut notes = Vec::new();
+    if pdf::pdfium().is_none() {
+        kinds.retain(|kind| *kind != FileKind::Pdf);
+        notes.push("PDFs wait for pdfium: digger download".to_string());
+    }
+    if !have("ffmpeg") {
+        kinds.retain(|kind| !matches!(kind, FileKind::Audio | FileKind::Video));
+        notes.push("recordings and videos wait for ffmpeg: sudo pacman -S ffmpeg".to_string());
+    }
+    if !have("tesseract") {
+        notes.push("screenshots are read without their words: sudo pacman -S tesseract tesseract-data-eng".to_string());
+    }
+    (kinds, notes)
+}
+
 /// Whether a command-line tool is installed.
 fn have(tool: &str) -> bool {
     std::process::Command::new(tool)
@@ -415,19 +476,10 @@ fn index_folders(folders: &[PathBuf], args: &IndexArgs, limit: Option<usize>, re
     for (folder, count) in &sync.crawl.datasets {
         println!("looks like a dataset (skipped): {} ({count} files)", tilde(folder));
     }
-    // What can't be read without a tool stays pending until it's installed.
-    if pdf::pdfium().is_none() {
-        indexer.kinds.retain(|kind| *kind != FileKind::Pdf);
-        println!("PDFs wait for pdfium: digger download");
-    }
-    if !have("ffmpeg") {
-        indexer
-            .kinds
-            .retain(|kind| !matches!(kind, FileKind::Audio | FileKind::Video));
-        println!("recordings and videos wait for ffmpeg: sudo pacman -S ffmpeg");
-    }
-    if !have("tesseract") {
-        println!("screenshots are read without their words: sudo pacman -S tesseract tesseract-data-eng");
+    let (kinds, notes) = readable_kinds();
+    indexer.kinds = kinds;
+    for note in notes {
+        println!("{note}");
     }
     let waiting = store.pending_count()? - store.pending(None, None, Some(&indexer.kinds))?.len();
     if waiting > 0 {
@@ -523,6 +575,37 @@ fn search(query: &str, args: &IndexArgs, tuning: &Tuning, kinds: &[FileKind], n:
     if query.is_empty() {
         bail!("search the code for what?");
     }
+    // The daemon answers at once (its query encoder is warm): ask it, unless this search is for another index or uses
+    // other settings.
+    let plain = args.index.is_none() && tuning.zgate == 2.0 && tuning.word_weight.is_none();
+    if plain && let Some(mut client) = Client::connect() {
+        let request = Request::Search {
+            query: code
+                .as_ref()
+                .map(|code| format!("code: {code}"))
+                .unwrap_or_else(|| query.clone()),
+            limit: n,
+            kinds: kinds.iter().map(|kind| kind.as_str().to_string()).collect(),
+            prefix_last: false,
+            words_only: false,
+        };
+        let response = client.send(&request)?;
+        if !response.ok {
+            bail!(response.error.unwrap_or_default());
+        }
+        let hits: Vec<SearchHit> = response
+            .hits
+            .unwrap_or_default()
+            .iter()
+            .map(protocol::Hit::to_search_hit)
+            .collect();
+        let footer = format!(
+            "({} vectors · search by the daemon {:.0} ms)",
+            response.vectors.unwrap_or(0),
+            response.ms.unwrap_or(0.0)
+        );
+        return print_hits(&hits, json, &footer);
+    }
     let store = IndexArgs {
         code: code.is_some(),
         ..args.clone()
@@ -546,6 +629,16 @@ fn search(query: &str, args: &IndexArgs, tuning: &Tuning, kinds: &[FileKind], n:
     };
     let hits = searcher.search(&query, vector.as_deref(), &options)?;
     let searched = encoded.elapsed();
+    let footer = format!(
+        "({} vectors · query encoder {:.2} s incl. start-up · search {:.0} ms)",
+        searcher.vector_count(),
+        encoded.duration_since(started).as_secs_f64(),
+        searched.as_secs_f64() * 1000.0
+    );
+    print_hits(&hits, json, &footer)
+}
+
+fn print_hits(hits: &[SearchHit], json: bool, footer: &str) -> Result<()> {
     if json {
         let rows: Vec<serde_json::Value> = hits
             .iter()
@@ -589,12 +682,7 @@ fn search(query: &str, args: &IndexArgs, tuning: &Tuning, kinds: &[FileKind], n:
             println!("      “{}”", excerpt.chars().take(160).collect::<String>());
         }
     }
-    println!(
-        "({} vectors · query encoder {:.2} s incl. start-up · search {:.0} ms)",
-        searcher.vector_count(),
-        encoded.duration_since(started).as_secs_f64(),
-        searched.as_secs_f64() * 1000.0
-    );
+    println!("{footer}");
     Ok(())
 }
 
@@ -620,8 +708,147 @@ fn status(args: &IndexArgs) -> Result<()> {
         println!("built with: {fingerprint}");
     }
     println!("this digger: vectors {}", llama::VECTOR_VERSION);
+    match Client::connect().map(|mut client| client.send(&Request::Status)) {
+        Some(Ok(response)) => {
+            if let Some(status) = response.status {
+                let detail = status.detail.map(|detail| format!(" ({detail})")).unwrap_or_default();
+                println!(
+                    "daemon: {}{detail}, {} of {} files searchable",
+                    status.state, status.searchable, status.files
+                );
+                if let Some(error) = status.last_error {
+                    println!("  last problem: {error}");
+                }
+            }
+        }
+        _ => println!("daemon: not running (systemctl --user start digger)"),
+    }
     println!("size: {:.1} MB", IndexStore::size(&store.file) as f64 / 1e6);
     Ok(())
+}
+
+/// Sends the daemon a command that only says ok or not.
+fn daemon_command(request: &Request) -> Result<()> {
+    let mut client = Client::connect().context("the daemon isn't running (systemctl --user start digger)")?;
+    client.command(request)
+}
+
+fn change_folders(folders: &[PathBuf], code: bool, add: bool) -> Result<()> {
+    if folders.is_empty() {
+        bail!("which folders?");
+    }
+    let mut settings = config::Config::load()?;
+    let (chosen, skipped) = if code {
+        (&mut settings.code_folders, &mut settings.code_skipped)
+    } else {
+        (&mut settings.folders, &mut settings.skipped)
+    };
+    let expanded = |list: &Vec<String>| -> Vec<String> {
+        list.iter()
+            .map(|path| config::expand(path).to_string_lossy().into_owned())
+            .collect()
+    };
+    let mut selection = {
+        let (chosen, skipped) = (expanded(chosen), expanded(skipped));
+        let chosen: Vec<&str> = chosen.iter().map(String::as_str).collect();
+        let skipped: Vec<&str> = skipped.iter().map(String::as_str).collect();
+        digger_core::folder_selection::FolderSelection::new(&chosen, &skipped, &[])
+    };
+    for folder in folders {
+        let folder = config::expand(&folder.to_string_lossy());
+        if add && !folder.is_dir() {
+            bail!("not a folder: {}", folder.display());
+        }
+        selection.set_folder(&folder.to_string_lossy(), add);
+    }
+    *chosen = selection
+        .chosen()
+        .iter()
+        .map(|path| config::shorten(Path::new(path)))
+        .collect();
+    *skipped = selection
+        .skipped()
+        .iter()
+        .map(|path| config::shorten(Path::new(path)))
+        .collect();
+    settings.save()?;
+    println!("{}", config::Config::file().display());
+    for folder in if code {
+        &settings.code_folders
+    } else {
+        &settings.folders
+    } {
+        println!("  {folder}");
+    }
+    if let Some(mut client) = Client::connect() {
+        client.command(&Request::Reload)?;
+        println!("the daemon is reading them");
+    }
+    Ok(())
+}
+
+/// Waybar's custom module: `{"text", "tooltip", "class", "percentage"}`, once or (`follow`) each time it changes.
+fn waybar(args: &IndexArgs, follow: bool) -> Result<()> {
+    let _ = args;
+    loop {
+        match Client::connect() {
+            Some(mut client) if follow => {
+                let first = client.send(&Request::Watch);
+                if let Ok(response) = first {
+                    print_waybar(response.status.as_ref());
+                    while let Ok(response) = client.read() {
+                        print_waybar(response.status.as_ref());
+                    }
+                }
+            }
+            Some(mut client) => {
+                let response = client.send(&Request::Status)?;
+                print_waybar(response.status.as_ref());
+                return Ok(());
+            }
+            None => print_waybar(None),
+        }
+        if !follow {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_secs(5)); // the daemon is starting, or stopped
+    }
+}
+
+fn print_waybar(status: Option<&protocol::Status>) {
+    use std::io::Write;
+    let icon = "\u{f0349}"; // nf-md-magnify
+    let line = match status {
+        None => serde_json::json!({"text": "", "tooltip": "Digger isn't running", "class": "offline"}),
+        Some(status) => {
+            let percent = (status.searchable * 100).checked_div(status.files).unwrap_or(100);
+            let mut tooltip = format!("{} of {} files searchable", status.searchable, status.files);
+            if status.code_files > 0 {
+                tooltip += &format!("\ncode: {} files, {} waiting", status.code_files, status.code_pending);
+            }
+            if let Some(current) = &status.current {
+                tooltip += &format!("\nreading {}", current.rsplit('/').next().unwrap_or(current));
+            }
+            if let Some(detail) = &status.detail {
+                tooltip += &format!("\n{}: {detail}", status.state);
+            }
+            if !status.missing.is_empty() {
+                tooltip += &format!("\nnot there now: {}", status.missing.join(", "));
+            }
+            if let Some(error) = &status.last_error {
+                tooltip += &format!("\nlast problem: {error}");
+            }
+            let busy = matches!(status.state.as_str(), "syncing" | "indexing" | "finishing");
+            let text = if busy && status.pending > 0 {
+                format!("{icon} {percent}%")
+            } else {
+                icon.to_string()
+            };
+            serde_json::json!({"text": text, "tooltip": tooltip, "class": status.state, "alt": status.state, "percentage": percent})
+        }
+    };
+    println!("{line}");
+    let _ = std::io::stdout().flush();
 }
 
 #[derive(serde::Deserialize)]
