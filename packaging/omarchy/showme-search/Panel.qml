@@ -26,7 +26,8 @@ Panel {
   readonly property string query: field.text.trim()
 
   implicitWidth: pill.implicitWidth
-  implicitHeight: pill.implicitHeight
+  // The bar's full height, so the pill sits in its middle.
+  implicitHeight: Style.bar.sizeHorizontal
 
   onOpenedChanged: {
     if (opened) {
@@ -132,7 +133,7 @@ Panel {
     id: pill
     anchors.verticalCenter: parent.verticalCenter
     implicitWidth: Style.space(220)
-    implicitHeight: Style.space(22)
+    implicitHeight: Style.space(18)
     radius: Style.cornerRadius
     color: pillArea.containsMouse || root.opened ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
     border.width: 1

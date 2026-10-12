@@ -16,6 +16,6 @@
     "description": "Search your files from the bar",
     "category": "Tools",
     "allowMultiple": false,
-    "defaultSection": "center"
+    "defaultSection": "left"
   }
 }
