@@ -194,6 +194,13 @@ fn absolute(path: &Path) -> PathBuf {
 }
 
 fn main() {
+    // Without Resizable BAR, the video memory the CPU can reach is a 256 MiB window that ggml-vulkan would fill with
+    // the model's buffers, leaving mpv, GStreamer and browsers a black picture (VK_ERROR_OUT_OF_DEVICE_MEMORY). Plain
+    // video memory is as fast for it.
+    if std::env::var_os("GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM").is_none() {
+        // SAFETY: no other thread is running yet.
+        unsafe { std::env::set_var("GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM", "1") };
+    }
     if let Err(error) = run(Cli::parse()) {
         eprintln!("error: {error:#}");
         std::process::exit(1);
