@@ -13,6 +13,7 @@ mod integrate;
 mod open;
 mod panel;
 mod pictures;
+mod player;
 mod preview;
 mod results;
 mod settings;

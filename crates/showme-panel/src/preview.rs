@@ -3,13 +3,16 @@
 //! the folder, the details and why it matched, with Open and Show in Files.
 
 use gtk::prelude::*;
-use gtk::{gio, glib, pango};
+use std::path::Path;
+
+use gtk::{glib, pango};
 use showme_core::model::FileKind;
 use showme_core::settings::OpenSettings;
 use sourceview5::prelude::*;
 
 use crate::open;
 use crate::pictures::{self, Key};
+use crate::player::Player;
 use crate::results::{ResultRow, clock};
 
 pub struct Preview {
@@ -25,7 +28,7 @@ pub struct Preview {
     play_button: gtk::Button,
     /// The row shown now, and the stream playing (stopped when the row changes).
     row: std::cell::RefCell<Option<ResultRow>>,
-    stream: std::cell::RefCell<Option<gtk::MediaFile>>,
+    stream: std::cell::RefCell<Option<std::rc::Rc<Player>>>,
     /// Where a video or recording plays once asked to: its still (or icon) until then.
     stage: std::cell::RefCell<Option<gtk::Box>>,
 }
@@ -145,17 +148,13 @@ impl Preview {
     /// Stops what's playing (the row changed, or the panel hid).
     pub fn stop(&self) {
         self.stage.borrow_mut().take();
-        if let Some(stream) = self.stream.borrow_mut().take() {
-            stream.pause();
-            stream.clear();
-        }
+        self.stream.borrow_mut().take();
         self.play_button.set_label("Play");
     }
 
     /// Plays the video or recording from its moment, or pauses it (Space).
     ///
-    /// The player is made only now, not for each row the arrows pass: GStreamer 1.28's decodebin3 aborts the whole
-    /// panel (`mq_slot_handle_stream_start: assertion failed: (collection)`) when players come and go that fast.
+    /// The player is made only now, not for each row the arrows pass (see `player`).
     pub fn toggle_play(&self) -> bool {
         if let Some(stream) = self.stream.borrow().clone() {
             if stream.is_playing() {
@@ -170,30 +169,14 @@ impl Preview {
         let row = self.row.borrow().clone();
         let Some(row) = row.filter(|row| matches!(row.kind, FileKind::Video | FileKind::Audio)) else { return false };
         let Some(stage) = self.stage.borrow().clone() else { return false };
-        let file = gtk::MediaFile::for_file(&gio::File::for_path(&row.path));
-        let at = row.loc.unwrap_or(0.0);
-        // Seek once the stream knows its length, then play from there.
-        file.connect_prepared_notify(move |file| {
-            if file.is_prepared() {
-                if at > 0.5 {
-                    file.seek((at * 1_000_000.0) as i64);
-                }
-                file.play();
-            }
-        });
-        if row.kind == FileKind::Video {
-            while let Some(child) = stage.first_child() {
-                stage.remove(&child);
-            }
-            let video = gtk::Video::builder().autoplay(false).vexpand(true).build();
-            video.set_height_request(300);
-            video.set_media_stream(Some(&file));
-            stage.append(&video);
-        } else {
-            stage.append(&gtk::MediaControls::new(Some(&file)));
-        }
+        // A video plays in its still's place; a recording under its icon.
+        let picture = stage.first_child().and_downcast::<gtk::Picture>().filter(|_| row.kind == FileKind::Video);
+        let Some(player) = Player::start(Path::new(&row.path), row.loc.unwrap_or(0.0), picture.as_ref()) else {
+            return false;
+        };
+        stage.append(&player.controls);
         self.play_button.set_label("Pause");
-        *self.stream.borrow_mut() = Some(file);
+        *self.stream.borrow_mut() = Some(player);
         true
     }
 

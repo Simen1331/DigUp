@@ -15,6 +15,9 @@ anyhow = "1"
 async-channel = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 showme-core = { path = "../showme-core" }
+gstreamer = "0.25"
+gstreamer-app = "0.25"
+gstreamer-video = "0.25"
 gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
 gtk4-layer-shell = { version = "0.8", optional = true }
 image = { version = "0.25", default-features = false, features = ["png"] }
