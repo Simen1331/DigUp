@@ -11,6 +11,7 @@ use gtk::prelude::*;
 use gtk::{gio, glib, pango};
 use showme_core::folder_selection::{FolderSelection, Mark};
 use showme_core::model::{FileKind, IndexOptions};
+use showme_core::proto::FolderProgress;
 use showme_core::{crawler, estimator};
 
 use crate::results::tilde;
@@ -24,6 +25,8 @@ pub struct FolderPicker {
     /// The folders listed at the top level (chosen ones and suggestions).
     roots: RefCell<Vec<String>>,
     checks: RefCell<Vec<(String, gtk::CheckButton)>>,
+    /// Each top folder's "45% read", shown while it's being read.
+    reading: RefCell<Vec<(String, gtk::Label)>>,
     /// The checkboxes are being set from the selection: their toggles aren't clicks.
     refreshing: std::cell::Cell<bool>,
     code: bool,
@@ -147,6 +150,7 @@ impl FolderPicker {
             selection: RefCell::new(selection),
             roots: RefCell::new(tops),
             checks: RefCell::new(Vec::new()),
+            reading: RefCell::new(Vec::new()),
             refreshing: std::cell::Cell::new(false),
             code,
             changed: RefCell::new(None),
@@ -178,6 +182,20 @@ impl FolderPicker {
         *self.changed.borrow_mut() = Some(Box::new(callback));
     }
 
+    /// Shows how far each folder being read has come (from the daemon's status).
+    pub fn set_progress(&self, folders: &[FolderProgress]) {
+        for (path, label) in self.reading.borrow().iter() {
+            let progress = folders.iter().find(|folder| folder.code == self.code && &folder.path == path);
+            match progress {
+                Some(folder) if folder.read < folder.files => {
+                    label.set_text(&format!("{}% read", 100 * folder.read / folder.files));
+                    label.set_visible(true);
+                }
+                _ => label.set_visible(false),
+            }
+        }
+    }
+
     pub fn selection(&self) -> FolderSelection {
         self.selection.borrow().clone()
     }
@@ -205,6 +223,7 @@ impl FolderPicker {
             self.list.remove(&child);
         }
         self.checks.borrow_mut().clear();
+        self.reading.borrow_mut().clear();
         for root in self.roots.borrow().clone() {
             let expander = gtk::Expander::new(None);
             let header = self.check_row(&root, true);
@@ -245,6 +264,10 @@ impl FolderPicker {
             counts.add_css_class("showme-sub");
             counts.set_text("counting…");
             row.append(&counts);
+            let reading = gtk::Label::builder().xalign(0.0).visible(false).build();
+            reading.add_css_class("showme-reading");
+            row.append(&reading);
+            self.reading.borrow_mut().push((path.to_string(), reading));
             let (folder, code) = (path.to_string(), self.code);
             glib::spawn_future_local(async move {
                 let text = gio::spawn_blocking(move || contents(&folder, code)).await.unwrap_or_default();

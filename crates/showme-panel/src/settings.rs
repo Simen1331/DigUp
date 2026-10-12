@@ -3,12 +3,14 @@
 //! daemon is told to read it again.
 
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::process::{Command, Stdio};
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gtk::prelude::*;
 use gtk::{glib, pango};
+use showme_core::estimator;
 use showme_core::proto::{Request, Status};
 use showme_core::settings::Config;
 
@@ -202,7 +204,7 @@ fn choice(
 
 /// The folders' page: the picker, and what's read in them.
 /// With `suggest` (setup, nothing chosen yet), the usual folders start checked.
-pub fn folders_page(editing: &Rc<Editing>, suggest: bool) -> gtk::Box {
+pub fn folders_page(editing: &Rc<Editing>, suggest: bool) -> (gtk::Box, Rc<FolderPicker>) {
     let page = page();
     page.append(&heading("Folders to search"));
     page.append(&note(
@@ -219,8 +221,8 @@ pub fn folders_page(editing: &Rc<Editing>, suggest: bool) -> gtk::Box {
     let changes = editing.clone();
     picker.connect_changed(move |selection| changes.change(|config| config.set_folder_selection(false, selection)));
     page.append(&picker.widget);
-    keep(&page, picker);
-    page
+    keep(&page, picker.clone());
+    (page, picker)
 }
 
 fn reading_page(editing: &Rc<Editing>) -> gtk::Box {
@@ -415,6 +417,116 @@ fn power_page(editing: &Rc<Editing>) -> gtk::Box {
     page
 }
 
+/// The first pass over the folders, at the top of their page: how far it has come and how long is left, with pause
+/// and the steps it's read in.
+struct Progress {
+    widget: gtk::Box,
+    label: gtk::Label,
+    bar: gtk::ProgressBar,
+    pause: gtk::Button,
+    paused: Cell<bool>,
+    /// (when, files read) over the last two minutes: the pace the time left is reckoned from.
+    samples: RefCell<VecDeque<(Instant, usize)>>,
+}
+
+impl Progress {
+    fn new(daemon: &Daemon, editing: &Rc<Editing>) -> Rc<Progress> {
+        let widget = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        widget.add_css_class("showme-progress");
+        let label = gtk::Label::builder().xalign(0.0).wrap(true).build();
+        let bar = gtk::ProgressBar::new();
+        let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let pause = gtk::Button::with_label("Pause");
+        let steps =
+            [("All at once", "0"), ("15 minutes", "15"), ("30 minutes", "30"), ("1 hour", "60"), ("2 hours", "120")]
+                .map(|(shown, stored)| (shown.to_string(), stored.to_string()));
+        let now = format!("{}", editing.config.borrow().step_minutes.round() as i64);
+        let step = choice(editing, &steps, &now, |config, stored| config.step_minutes = stored.parse().unwrap_or(0.0));
+        let step_label = gtk::Label::new(Some("Read in steps of"));
+        step_label.set_margin_start(12);
+        step_label.add_css_class("showme-sub");
+        controls.append(&pause);
+        controls.append(&step_label);
+        controls.append(&step);
+        widget.append(&label);
+        widget.append(&bar);
+        widget.append(&controls);
+        widget.append(&note(
+            "A big folder can take hours the first time. With steps, ShowMe pauses after each one and tells you; \
+             press Resume for the next.",
+        ));
+        let progress = Rc::new(Progress {
+            widget,
+            label,
+            bar,
+            pause,
+            paused: Cell::new(false),
+            samples: RefCell::new(VecDeque::new()),
+        });
+        let (weak, sender) = (Rc::downgrade(&progress), daemon.clone());
+        progress.pause.connect_clicked(move |_| {
+            if let Some(progress) = weak.upgrade() {
+                sender.send(Line::Other, if progress.paused.get() { Request::Resume } else { Request::Pause });
+            }
+        });
+        progress.widget.set_visible(false);
+        progress
+    }
+
+    fn update(&self, status: Option<&Status>) {
+        let Some(status) = status.filter(|status| status.files > 0) else {
+            self.widget.set_visible(false);
+            return;
+        };
+        self.widget.set_visible(true);
+        let read = status.files.saturating_sub(status.pending);
+        let paused = status.state == "paused";
+        self.paused.set(paused);
+        self.pause.set_label(if paused { "Resume" } else { "Pause" });
+        self.pause.set_sensitive(status.pending > 0 || status.state == "finishing");
+        self.bar.set_fraction(read as f64 / status.files as f64);
+        let share = 100 * read / status.files;
+        let now = Instant::now();
+        let mut samples = self.samples.borrow_mut();
+        if paused || status.pending == 0 {
+            samples.clear();
+        } else {
+            samples.push_back((now, read));
+            while samples.front().is_some_and(|(when, _)| now.duration_since(*when) > Duration::from_secs(120)) {
+                samples.pop_front();
+            }
+        }
+        // The time left at the pace of the last minutes, once there's enough of it to go by.
+        let left = match (samples.front(), samples.back()) {
+            (Some((first, first_read)), Some((last, last_read)))
+                if last.duration_since(*first) >= Duration::from_secs(15) && last_read > first_read =>
+            {
+                let pace = (last_read - first_read) as f64 / last.duration_since(*first).as_secs_f64();
+                Some(estimator::rough_duration(status.pending as f64 / pace))
+            }
+            _ => None,
+        };
+        let text = if status.pending == 0 && status.state == "finishing" {
+            format!("All {} files are searchable. Reading the rest of {} long files.", status.files, status.unfinished)
+        } else if status.pending == 0 {
+            format!("All {} files are read.", status.files)
+        } else if paused && status.detail.as_deref() == Some("step") {
+            format!("Paused after a step: {read} of {} files read ({share}%). Resume for the next step.", status.files)
+        } else if paused {
+            format!("Paused: {read} of {} files read ({share}%).", status.files)
+        } else {
+            let mut text = format!("Reading: {read} of {} files ({share}%)", status.files);
+            match left {
+                Some(left) => text.push_str(&format!(" · about {left} left")),
+                None => text.push_str(" · working out the time left"),
+            }
+            text
+        };
+        self.label.set_text(&text);
+        self.bar.set_visible(status.pending > 0);
+    }
+}
+
 /// What the daemon is doing, kept current, with pause and sync.
 struct StatusPage {
     page: gtk::Box,
@@ -531,7 +643,11 @@ pub fn open(app: &gtk::Application) {
     let scrolled = |child: &gtk::Box| {
         gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).child(child).build()
     };
-    stack.add_titled(&scrolled(&folders_page(&editing, false)), Some("folders"), "Folders");
+    let progress = Progress::new(&daemon, &editing);
+    let (folders, picker) = folders_page(&editing, false);
+    // Under the page's heading and note, above the folders.
+    folders.insert_child_after(&progress.widget, picker.widget.prev_sibling().as_ref());
+    stack.add_titled(&scrolled(&folders), Some("folders"), "Folders");
     stack.add_titled(&scrolled(&reading_page(&editing)), Some("reading"), "Reading");
     stack.add_titled(&scrolled(&code_page(&editing)), Some("code"), "Code");
     stack.add_titled(&scrolled(&opening_page(&editing)), Some("opening"), "Opening & Looks");
@@ -558,18 +674,24 @@ pub fn open(app: &gtk::Application) {
     if let Ok(page) = std::env::var("SHOWME_SETTINGS_PAGE") {
         stack.set_visible_child_name(&page);
     }
-    let weak = Rc::downgrade(&status);
+    let (weak, weak_progress, weak_picker) = (Rc::downgrade(&status), Rc::downgrade(&progress), Rc::downgrade(&picker));
     glib::spawn_future_local(async move {
         while let Ok(event) = incoming.recv().await {
             let Some(status) = weak.upgrade() else { break };
             if let Event::Status(now) = event {
                 status.update(now.as_deref());
+                if let Some(progress) = weak_progress.upgrade() {
+                    progress.update(now.as_deref());
+                }
+                if let (Some(picker), Some(now)) = (weak_picker.upgrade(), now.as_deref()) {
+                    picker.set_progress(&now.folders);
+                }
             }
         }
     });
     window.connect_close_request(move |_| {
         editing.flush();
-        let _ = &status;
+        let _ = (&status, &progress);
         glib::Propagation::Proceed
     });
     window.present();

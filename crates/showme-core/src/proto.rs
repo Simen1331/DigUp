@@ -163,7 +163,7 @@ impl Hit {
 pub struct Status {
     /// starting | syncing | indexing | finishing (the rest of long files) | idle | paused | waiting | error
     pub state: String,
-    /// Why it waits ("model", "on battery", "power saver"), or what went wrong.
+    /// Why it waits ("model", "on battery", "power saver"), or what went wrong; "step" when it paused after a step.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
     pub files: usize,
@@ -195,6 +195,20 @@ pub struct Status {
     /// Code search is on (there are code folders).
     #[serde(default)]
     pub has_code: bool,
+    /// How far each chosen folder has been read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folders: Vec<FolderProgress>,
+}
+
+/// A chosen folder's files, and how many of them are read.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct FolderProgress {
+    pub path: String,
+    pub files: usize,
+    pub read: usize,
+    /// One of the code folders.
+    #[serde(default)]
+    pub code: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

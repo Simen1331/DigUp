@@ -314,7 +314,7 @@ pub fn open(app: &gtk::Application) {
     code.prepend(&note("Optional: skip this when you don't write code."));
     let pages = [
         scrolled(&welcome.page),
-        scrolled(&settings::folders_page(&editing, true)),
+        scrolled(&settings::folders_page(&editing, true).0),
         scrolled(&code),
         scrolled(&programs_page()),
         scrolled(&desktop_page()),

@@ -36,6 +36,8 @@ pub struct Config {
     pub include_datasets: bool,
     /// The big first pass also runs on battery (new files always index right away).
     pub index_on_battery: bool,
+    /// The big first pass reads this long at a time, then pauses until told to go on (minutes); 0: all at once.
+    pub step_minutes: f64,
     /// The code index catches up once the code folders have been quiet this long (seconds).
     pub code_quiet_seconds: f64,
     /// The query encoder (~0.25 GB) is let go after this long without a search (seconds).
@@ -97,6 +99,7 @@ impl Default for Config {
             include_code: false,
             include_datasets: false,
             index_on_battery: true,
+            step_minutes: 0.0,
             code_quiet_seconds: 60.0,
             encoder_idle_seconds: 600.0,
             linger_seconds: 60.0,

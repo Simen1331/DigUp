@@ -81,9 +81,12 @@ window.showme, window.showme-window {
 .showme-name {
   font-weight: bold;
 }
-.showme-place {
+.showme-place, .showme-reading {
   color: @selected-text;
   font-size: 12px;
+}
+.showme-progress {
+  margin: 4px 0 12px 0;
 }
 .showme-sub, .showme-footer, .showme-details, .showme-folder {
   color: alpha(@text, 0.6);

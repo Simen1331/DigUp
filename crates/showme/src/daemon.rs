@@ -30,7 +30,7 @@ use showme_core::store::IndexStore;
 use showme_embed::{LlamaEmbedder, LlamaModels, llama, models};
 use std::collections::VecDeque;
 
-use showme_core::proto::{self as protocol, Hit, Request, Response, Status};
+use showme_core::proto::{self as protocol, FolderProgress, Hit, Request, Response, Status};
 use showme_core::settings::Config;
 
 /// What every thread shares.
@@ -57,6 +57,10 @@ struct Control {
     stop: bool,
     reload: bool,
     paused: bool,
+    /// The pause came at the end of a step (`step_minutes`), not from the user.
+    step_done: bool,
+    /// When the current step of the first pass began.
+    step_started: Option<Instant>,
     /// Why the backfill has to wait (power), or None.
     blocker: Option<String>,
 }
@@ -372,12 +376,19 @@ fn index_with(shared: &Arc<Shared>, config: &Config) -> Result<Stop> {
         if let Some(stop) = stopping(shared) {
             return Ok(stop);
         }
-        let paused = shared.control().paused;
+        let (paused, step_done) = {
+            let mut control = shared.control();
+            // Nothing waiting: the next pass starts a new step.
+            if !control.paused {
+                control.step_started = None;
+            }
+            (control.paused, control.step_done)
+        };
         let blocker = shared.control().blocker.clone();
         let waiting = main.store.pending_count()? + code.store.pending_count()?;
         shared.update(|status| {
             (status.state, status.detail) = match (paused, &blocker) {
-                (true, _) if waiting > 0 => ("paused".into(), None),
+                (true, _) if waiting > 0 => ("paused".into(), step_done.then(|| "step".into())),
                 (false, Some(why)) if waiting > 0 => ("waiting".into(), Some(why.clone())),
                 _ => ("idle".into(), None),
             };
@@ -509,8 +520,8 @@ fn embed(shared: &Shared, part: &mut Part, only: Option<&[i64]>) -> Result<()> {
         control.sync
             || control.stop
             || control.reload
-            || (!new && (control.paused || control.blocker.is_some()))
             || code && control.code_sync
+            || (!new && (control.paused || control.blocker.is_some() || step_over(shared, control)))
     };
     shared.update(|status| {
         status.state = "indexing".into();
@@ -532,6 +543,30 @@ fn embed(shared: &Shared, part: &mut Part, only: Option<&[i64]>) -> Result<()> {
     result.map(|_| ()).map_err(anyhow::Error::from)
 }
 
+/// Whether the first pass has read for a whole step (`step_minutes`): then it pauses, says so, and waits to be told to
+/// go on. The step's clock starts with its first file.
+fn step_over(shared: &Shared, mut control: MutexGuard<'_, Control>) -> bool {
+    let minutes = shared.config.lock().unwrap().step_minutes;
+    if minutes <= 0.0 {
+        return false;
+    }
+    let started = *control.step_started.get_or_insert_with(Instant::now);
+    if started.elapsed() < Duration::from_secs_f64(minutes * 60.0) {
+        return false;
+    }
+    control.paused = true;
+    control.step_done = true;
+    control.step_started = None;
+    drop(control);
+    let status = shared.status.lock().unwrap().clone();
+    let share = (100 * (status.files - status.pending)).checked_div(status.files).unwrap_or(100);
+    notify(
+        "ShowMe paused after a step",
+        &format!("{share}% of your folders are read. Resume in ShowMe's settings, or with: showme resume"),
+    );
+    true
+}
+
 fn finish_long_files(shared: &Shared, part: &mut Part) -> Result<()> {
     shared.update(|status| {
         status.state = "finishing".into();
@@ -545,6 +580,7 @@ fn finish_long_files(shared: &Shared, part: &mut Part) -> Result<()> {
             || control.reload
             || control.paused
             || control.blocker.is_some()
+            || step_over(shared, control)
     };
     part.indexer.finish_long_files(&mut should_stop, &mut |step| {
         shared.generation.fetch_add(1, Ordering::Relaxed);
@@ -587,6 +623,18 @@ fn counts(shared: &Shared, main: &Part, code: &Part) {
     };
     let (files, searchable, pending) = tally(&main_counts);
     let (code_files, _, code_pending) = tally(&code_counts);
+    let mut folders = Vec::new();
+    for part in [main, code] {
+        let roots: Vec<String> = part.roots.iter().map(|root| root.to_string_lossy().into_owned()).collect();
+        if let Ok(progress) = part.store.progress(&roots) {
+            folders.extend(roots.into_iter().zip(progress).map(|(path, (files, read))| FolderProgress {
+                path,
+                files,
+                read,
+                code: part.code,
+            }));
+        }
+    }
     shared.update(|status| {
         status.files = files;
         status.searchable = searchable;
@@ -595,6 +643,7 @@ fn counts(shared: &Shared, main: &Part, code: &Part) {
         status.unfinished = main_counts.unfinished;
         status.code_files = code_files;
         status.code_pending = code_pending;
+        status.folders = folders;
     });
 }
 
@@ -1060,12 +1109,22 @@ fn serve(stream: UnixStream, shared: &Arc<Shared>) {
                 return;
             }
             Request::Pause => {
-                shared.request(|control| control.paused = true);
-                shared.update(|status| status.state = "paused".into());
+                shared.request(|control| {
+                    control.paused = true;
+                    control.step_done = false;
+                });
+                shared.update(|status| {
+                    status.state = "paused".into();
+                    status.detail = None;
+                });
                 Response::ok()
             }
             Request::Resume => {
-                shared.request(|control| control.paused = false);
+                shared.request(|control| {
+                    control.paused = false;
+                    control.step_done = false;
+                    control.step_started = None;
+                });
                 Response::ok()
             }
             Request::Sync => {

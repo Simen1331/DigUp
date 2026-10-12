@@ -391,6 +391,21 @@ impl IndexStore {
         )
     }
 
+    /// For each root: the files under it, and how many of them are read (or given up on).
+    pub fn progress(&self, roots: &[String]) -> Result<Vec<(usize, usize)>> {
+        let mut statement = self
+            .db
+            .prepare("SELECT COUNT(*), COALESCE(SUM(state != 'pending'), 0) FROM files WHERE path >= ? AND path < ?")?;
+        roots
+            .iter()
+            .map(|root| {
+                statement.query_row(params_from_iter(prefix_range(root)), |row| {
+                    Ok((row.get::<_, i64>(0)? as usize, row.get::<_, i64>(1)? as usize))
+                })
+            })
+            .collect()
+    }
+
     /// What indexing learned about a file (`finish`'s `info`).
     pub fn info(&self, id: i64) -> Result<Info> {
         let json: Option<String> =
@@ -569,6 +584,17 @@ mod tests {
         let store = IndexStore::open_main(dir.path()).unwrap();
         store.insert(&Candidate { kind: FileKind::Video, ..candidate("/D/Media/Courses/a.mp4", 1) }).unwrap();
         assert_eq!(store.files_under(&["/D".into(), "/D/Media/Courses".into()]).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn progress_counts_each_folder_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = IndexStore::open_main(dir.path()).unwrap();
+        let read = store.insert(&candidate("/A/notes.txt", 1)).unwrap();
+        store.insert(&candidate("/A/plan.txt", 2)).unwrap();
+        store.insert(&candidate("/AB/other.txt", 3)).unwrap();
+        store.finish(read, "done", None, &Info::new()).unwrap();
+        assert_eq!(store.progress(&["/A".into(), "/AB".into(), "/C".into()]).unwrap(), vec![(2, 1), (1, 0), (0, 0)]);
     }
 
     #[test]
