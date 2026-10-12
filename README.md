@@ -7,6 +7,8 @@ Search the files on your Linux desktop by what's in them, with Google DeepMind's
 <a href="https://huggingface.co/google/embeddinggemma-2">EmbeddingGemma 2</a>. Made for
 <a href="https://omarchy.org">Omarchy</a> (Arch Linux + Hyprland).</p>
 
+<p align="center"><img src="docs/demo.gif" width="800" alt="ShowMe's panel finding a dragon in a video at 0:33 and playing it, a passage about zebra stripes on page 7 of a PDF with the words marked, and a dog on a beach from a search in Norwegian"></p>
+
 ShowMe is a Rust port of [DigUp](https://github.com/ARahim3/DigUp), Abdur Rahim's search app for the Mac. It keeps
 DigUp's index, ranking and the way it reads files, and swaps the Mac parts for Linux ones: llama.cpp on Vulkan (or the
 CPU), pdfium, ffmpeg and Tesseract, a systemd user service, and a GTK4 panel that drops over your windows from a
@@ -123,7 +125,9 @@ from the Mac app, in Norwegian.
 
 To Abdur Rahim for [DigUp](https://github.com/ARahim3/DigUp), which this is ported from; to Google DeepMind for
 EmbeddingGemma 2; and to llama.cpp, pdfium, ffmpeg, Tesseract, GTK and Omarchy. `ACKNOWLEDGEMENTS.txt` has the licenses
-of the code ShowMe includes.
+of the code ShowMe includes. The demo above searches free media: Sintel and Big Buck Bunny (© Blender Foundation,
+CC BY 3.0), Wikipedia's "Zebra" (CC BY-SA 4.0), LibriVox's Moby Dick (public domain) and photos from Wikimedia
+Commons.
 
 ## License
 
