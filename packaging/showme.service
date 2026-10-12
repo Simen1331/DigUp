@@ -4,7 +4,7 @@
 #   systemctl --user daemon-reload && systemctl --user enable --now showme
 [Unit]
 Description=ShowMe: search your files by what's in them
-Documentation=https://github.com/Simen1331/DigUp
+Documentation=https://github.com/Simen1331/ShowMe
 
 [Service]
 ExecStart=%h/.cargo/bin/showme daemon

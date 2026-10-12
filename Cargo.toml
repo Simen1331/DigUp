@@ -7,4 +7,4 @@ members = ["crates/llama-sys", "crates/showme-core", "crates/showme-embed", "cra
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/Simen1331/DigUp"
+repository = "https://github.com/Simen1331/ShowMe"
