@@ -1,33 +1,29 @@
 <p align="center"><img src="docs/logo.png" width="96" alt=""></p>
 
-<h1 align="center">DigUp</h1>
+<h1 align="center">ShowMe</h1>
 
-<p align="center"><b>Describe it. Dig it up.</b><br>
-Search the files on your Mac by what's in them, with Google DeepMind's
-<a href="https://huggingface.co/google/embeddinggemma-2">EmbeddingGemma 2</a>.</p>
+<p align="center"><b>Describe it. ShowMe finds it.</b><br>
+Search the files on your Linux desktop by what's in them, with Google DeepMind's
+<a href="https://huggingface.co/google/embeddinggemma-2">EmbeddingGemma 2</a>. Made for
+<a href="https://omarchy.org">Omarchy</a> (Arch Linux + Hyprland).</p>
 
-<p align="center"><a href="https://github.com/ARahim3/DigUp/releases/latest"><b>Download for Mac</b></a> · Apple Silicon,
-macOS 14 or later · Free and open source</p>
+ShowMe is a Rust port of [DigUp](https://github.com/ARahim3/DigUp), Abdur Rahim's search app for the Mac. It keeps
+DigUp's index, ranking and the way it reads files, and swaps the Mac parts for Linux ones: llama.cpp on Vulkan (or the
+CPU), pdfium, ffmpeg and Tesseract, a systemd user service, and a GTK4 panel that drops over your windows from a
+Hyprland key or the Omarchy bar.
 
-<p align="center"><img src="docs/demo.gif" width="800" alt="DigUp's search panel finding a zebra in a video, a podcast moment, a clause in a lease, a dog on the beach in English, Bengali and Arabic, and code that opens in Zed"></p>
-
-EmbeddingGemma 2 is the multimodal embedding model Google DeepMind released in October 2026. It puts text, images,
-audio and video into one shared space: a photo of a dog on a beach lands next to the words "a dog on the beach", and a
-recording of someone talking about sleep lands next to "where they talk about sleep". It understands more than 100
-languages, it's open (Apache 2.0), and at 740M parameters it's small enough to run comfortably on a laptop.
-
-DigUp brings that to the files on your Mac. Pick the folders to search, and it reads the pictures, PDFs, documents,
-recordings and videos in them. Then describe what you're looking for, in your own words, and it finds the match,
-whatever kind of file it is. All of it happens on your Mac.
+EmbeddingGemma 2 puts text, images, audio and video into one shared space: a photo of a dog on a beach lands next to
+the words "a dog on the beach", and a recording of someone talking about sleep lands next to "where they talk about
+sleep". It understands more than 100 languages, it's open (Apache 2.0), and at 740M parameters it runs comfortably on
+a desktop GPU.
 
 ## What you can find
 
-- "zebra in a video" opens the clip at the moment the zebra shows up
+- "zebra in a video" shows the clip at the moment the zebra shows up
 - "where they talk about sleep" jumps to that minute of a podcast
 - "the clause about pets in the lease" shows the PDF page, with the words marked
 - "a dog on the beach" finds the photo, and "payment declined error" the screenshot
-- a search in English can find a note written in Bengali, Arabic or any of the model's 100+ languages, and the other
-  way around
+- a search in English can find a note written in Norwegian, Bengali or any of the model's 100+ languages
 - "code: retry a failed call with backoff" finds the function in your projects, if you turn on code search
 
 Exact words count too. Invoice numbers, error codes and names are matched as written, in file names, document text
@@ -35,140 +31,100 @@ and the text inside screenshots, so a search gets both the meaning and the exact
 
 ## Private
 
-Nothing you index leaves your Mac. DigUp goes online only to download the model once and to check for updates once a
-day. The update check sends nothing about your files, and you can turn it off. No account, no telemetry.
+Nothing you index leaves your computer. ShowMe goes online only to download the model and pdfium once. No account, no
+telemetry. It only reads your files; it never changes, moves or uploads them.
+
+## Status
+
+Early, and used daily on one Omarchy 4 machine (Hyprland 0.56, RTX 3060 through Vulkan). Expect rough edges. There's
+no AUR package yet, so for now it's built from source. Issues and reports from other setups are welcome.
 
 ## Install
 
-1. Download the DMG from [Releases](https://github.com/ARahim3/DigUp/releases) and drag DigUp to Applications, or use
-   Homebrew: `brew install --cask arahim3/tap/digup`.
-2. Open it. While the model downloads (865 MB, once), pick the folders to search: whole folders, or only some of their
-   subfolders. DigUp shows how long the first pass will take for each.
-3. Press **⇧⌘Space** in any app and describe what you're looking for.
+On Omarchy or Arch:
 
-DigUp needs an Apple Silicon Mac with macOS 14 or later (it's tested on macOS 26), and it keeps itself up to date.
+```sh
+sudo pacman -S --needed rust cmake clang vulkan-headers vulkan-icd-loader spirv-headers shaderc \
+  libheif ffmpeg tesseract tesseract-data-eng gtk4 gtk4-layer-shell gtksourceview5 gst-plugins-good gst-libav
+git clone https://github.com/Simen1331/ShowMe && cd ShowMe
+scripts/fetch-llama.sh                                   # llama.cpp at a pinned tag, with a one-line patch
+cargo install --path crates/showme --features vulkan    # leave out --features vulkan to run on the CPU
+cargo install --path crates/showme-panel
+showme-panel --setup
+```
+
+Setup downloads the model (865 MB) and pdfium, lets you pick folders, starts the services, and offers to add a key
+(`SUPER + D`) and ShowMe to the Omarchy bar or Waybar, taking a backup of each file it changes. Add other Tesseract
+languages (`tesseract-data-nor` and so on) to read screenshots in them.
+
+By hand instead:
+
+```sh
+showme download
+showme add ~/Documents ~/Pictures ~/Downloads           # and: showme add --code ~/code
+cp packaging/showme.service packaging/showme-panel.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now showme showme-panel
+showme status
+```
+
+`packaging/` holds the Hyprland key and window rules (`hyprland.lua` for 0.55 and later, `hyprland.conf` before), the
+Omarchy bar widgets (`omarchy/`) and a Waybar module.
 
 ## Using it
 
-| Key | What it does |
-|---|---|
-| ⇧⌘Space | Opens the search panel from any app (you can change it in Settings) |
-| ↓ ↑ | Moves through the results |
-| ↩ | Opens the result: videos and recordings at the moment, PDFs with your words in Preview's search, code in your editor at the line |
-| Space | Quick Look, at the page or moment (once you've moved to a result) |
-| ⌘↩ | Shows it in Finder |
-| ⌘C | Copies the file, to paste anywhere |
-| ⌘O | The same search in a bigger window, with a picture grid and filters |
+Press `SUPER + D`, or click the search field in the Omarchy bar, and describe what you're looking for.
 
-DigUp lives in the menu bar, where you can see how indexing is going, pause it, or open Settings. The first time a
-video opens at its moment, macOS asks whether DigUp may control QuickTime Player; that's how it jumps there.
+In the panel: `↑` `↓` move, `Enter` opens the file where it matched (the page, the moment), `Ctrl+Enter` shows it in
+Files, `Space` previews (and plays a video or recording from its moment), `Ctrl+C` copies it, `Ctrl+O` opens the big
+window, `Alt+1`–`7` filter by kind, `Ctrl+,` opens Settings.
+
+The bar's field drops the hits under it as you type: `Enter` opens one, `Shift+Enter` shows them all in the big window,
+and the gear opens Settings. The status widget shows how far the first pass has come; middle-click pauses it.
+
+From the terminal: `showme search "a dog on the beach"`, `showme status`, `showme estimate` (how long the first pass
+over your folders takes) and `showme --help`.
 
 ## What it reads
 
 Only the folders you choose:
 
-- pictures and screenshots (HEIC, JPEG, PNG, RAW, WebP and more), by what they show, and screenshots by their text too
-- PDFs, page by page, scans included. A long one gets its first 30 pages right away and the rest once everything
-  else is in (up to 5,000 pages a file)
-- documents: txt, md, rtf, doc, docx, odt, html, long ones the same way. Text that's mostly numbers, like a data
-  export, is matched by its exact text only
-- audio of any length: the model listens to 30 seconds at a time, so DigUp takes overlapping 30-second windows and a
-  match points to its moment
-- video of any length: a frame every few seconds, one per shot, plus the soundtrack the same way as audio
+- pictures and screenshots (HEIC, JPEG, PNG, WebP, AVIF and more), by what they show, and screenshots by their text too
+- PDFs, page by page. A long one gets its first pages right away and the rest once everything else is in
+- documents: txt, md, rtf, doc, docx, odt, html, long ones the same way
+- audio of any length, in overlapping 30-second windows, so a match points to its moment
+- video of any length: a keyframe per shot (at most one every few seconds), plus the soundtrack the same way as audio
 
-Outside the folders you pick for code search, it never reads code, and inside a code project (a folder with `.git`,
-`package.json` and the like) it reads only screenshots. It never reads keys, certificates, password files, hidden
-folders like `~/.ssh`, app bundles or caches. It skips folders that look like datasets, and never downloads iCloud
-files that only live in the cloud. You can skip more folders or file types in Settings. DigUp only reads your files;
-it never changes, moves or uploads them.
+It never reads keys, certificates, password files, hidden folders like `~/.ssh` or caches, and inside a code project it
+reads only screenshots unless you add it for code search. You can skip more folders or file types in Settings. A new
+file is searchable a second or two after it lands.
 
-The first pass takes a few minutes for a few hundred files and can take an hour for a big Downloads folder. That
-happens once, on battery too unless you tell it to wait for a charger, and it pauses in Low Power Mode. After that, a
-new file is searchable a second or two after it lands.
+How long the first pass takes, on an RTX 3060: about 0.04 s a picture or PDF page, 0.02 s a stretch of document or
+code, 0.005 s a second of audio and 0.02 s a second of video. Screenshots take 2–3 s each, as Tesseract reads them at
+full size. `showme estimate` tells you for your own folders before it starts.
 
-## Code
+## How it's built
 
-EmbeddingGemma 2 reads code too, so DigUp can search your projects. Code search is off until you turn it on, in
-Settings → Code or during setup, for the folders you pick. Each repo shows how long reading it takes and how much room
-its index needs. Then start a search with `code:` and say what the code does, or type a name that's in it:
+A Cargo workspace in `crates/`:
 
-- "code: retry a failed call with backoff" finds the function, whatever it's called
-- "code: refreshAccessToken" goes to the line that defines it, not the places that call it
-- "code: plot how many examples each class has" finds the notebook cell
-
-Results open in your editor at the line: Zed, VS Code, Cursor, Xcode, Sublime Text, JetBrains IDEs and a few more
-(pick one in Settings). Code has an index of its own and never shows up in other searches. DigUp reads source files,
-notebooks (without their outputs) and a repo's own docs. It skips what git ignores, vendored and generated code, data
-files, and anything that looks like a key or a password. While you're working on code, the index catches up a minute
-after things go quiet.
-
-Reading code takes about 20 seconds for a small app, and about 20 minutes and 130 MB of index for all of llama.cpp.
-
-## How it works
-
-```
-your folders ─► readers (ImageIO, PDFKit, AVFoundation, and Vision for the text in screenshots)
-             ─► EmbeddingGemma 2 on llama.cpp (Metal), in a helper process that quits when it's done
-             ─► one SQLite file: a vector for every picture, page, passage, video frame and 30 s of sound,
-                plus a keyword index (code search keeps a second one, for code)
-your words   ─► the same model's text part (~250 MB, only while you search) ─► nearest vectors + exact words
-```
-
-DigUp runs ggml-org's 8-bit build of EmbeddingGemma 2 through [llama.cpp](https://github.com/ggml-org/llama.cpp) on
-the Mac's GPU. Every vector lives in the same 768-dimensional space, which is why one query can rank a video frame
-against a PDF page. A search embeds your words in milliseconds and compares them with everything in the index.
-Exact-word matches get a boost, because no embedding holds an invoice number exactly.
-
-The index remembers which model version made its vectors. An update that leaves the vectors unchanged keeps your
-index, and a test checks every llama.cpp update against stored reference vectors before it ships.
-
-## Build from source
-
-You'll need Xcode 26, git, and CMake (or `uv`) for llama.cpp. If `xcode-select -p` shows the Command Line Tools,
-switch to Xcode first (`sudo xcode-select -s /Applications/Xcode.app`): they lack the SwiftUI and Swift Testing
-macros the build needs.
+- `llama-sys`: llama.cpp and its multimodal library, built with CMake (Vulkan or CPU)
+- `showme-embed`: the model: text, image and audio embeddings, checked against reference vectors
+- `showme-core`: the crawler, the index (SQLite, DigUp's schema), search and ranking, and reading each kind of file
+- `showme`: the command-line tool and the daemon (`showme daemon`, the systemd user service)
+- `showme-panel`: the GTK4 panel, the big window, Settings and Setup
 
 ```sh
-git clone https://github.com/ARahim3/DigUp && cd DigUp
-scripts/build-llama.sh            # llama.cpp at a pinned tag, with a one-line patch (a few minutes)
-swift build -c release && swift test
-./build.sh                        # → build.noindex/DigUp.app
+cargo fmt --check && cargo clippy --features showme/vulkan -- -D warnings && cargo test --features showme/vulkan
 ```
 
-There's also a command-line tool, `.build/release/digup`, that indexes, searches and runs the evals from the terminal
-(`digup --help`). `scripts/make-testbed.sh` builds a folder of test files to try it on (it needs ffmpeg), and `evals/`
-holds the queries ranking changes are measured with.
-
-## FAQ
-
-**How is this different from Spotlight?** Spotlight finds files by their names, text and metadata. DigUp also finds
-them by what they show or say, and takes you to the page or moment. The two work fine side by side.
-
-**Why is the download 865 MB?** That's the model: the text part (310 MB) and the image and audio encoders (555 MB).
-The app itself is about 20 MB.
-
-**Will it slow my Mac down?** Only the first pass is heavy. After that it reads new files only. The model runs in a
-separate process that quits when it's done, and the search side only loads while you're searching.
-
-**Which languages?** The model knows more than 100, and DigUp searches in all of them, across languages too. The evals
-cover only English, Bengali and Arabic because those are the languages of the files DigUp was tested on, and Google
-notes that the model isn't equally strong in every language. Two limits apply to exact words, not to meaning: inside
-screenshots they're read by Apple's text recognition, which knows about 25 languages, and languages written without
-spaces, like Chinese, Japanese and Thai, aren't split into words.
-
-**How do I remove it?** Quit it, then delete DigUp.app and `~/Library/Application Support/DigUp`, which holds the
-model and the indexes. Its settings are in `~/Library/Preferences/com.abdurrahim.DigUp.plist`. With Homebrew,
-`brew uninstall --cask --zap digup` removes all of it.
+`evals/` holds the queries ranking changes are measured with (`showme eval`). `docs/rust-port-plan.md` follows the port
+from the Mac app, in Norwegian.
 
 ## Thanks
 
-DigUp is built on [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2) by Google DeepMind (Apache 2.0),
-[llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT) and [Sparkle](https://sparkle-project.org) (MIT). Their
-license notices ship inside the app, in `DigUp.app/Contents/Resources/Acknowledgements.txt`.
-
-DigUp isn't affiliated with Google or Apple. Gemma is a trademark of Google LLC; Mac and Spotlight are trademarks of
-Apple Inc.
+To Abdur Rahim for [DigUp](https://github.com/ARahim3/DigUp), which this is ported from; to Google DeepMind for
+EmbeddingGemma 2; and to llama.cpp, pdfium, ffmpeg, Tesseract, GTK and Omarchy. `ACKNOWLEDGEMENTS.txt` has the licenses
+of the code ShowMe includes.
 
 ## License
 
-MIT
+MIT, like DigUp. See `LICENSE`.

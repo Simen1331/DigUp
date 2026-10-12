@@ -4,10 +4,10 @@ name: Rust
 
 on:
   push:
-    paths: ["crates/**", "Cargo.*", "rustfmt.toml", "Tests/LlamaRuntimeTests/Reference/**", "scripts/fetch-llama.sh", "scripts/build-llama.sh",
+    paths: ["crates/**", "Cargo.*", "rustfmt.toml", "scripts/fetch-llama.sh",
             "scripts/llama.cpp-no-logits.patch", ".github/workflows/rust.yml"]
   pull_request:
-    paths: ["crates/**", "Cargo.*", "rustfmt.toml", "Tests/LlamaRuntimeTests/Reference/**", "scripts/fetch-llama.sh", "scripts/build-llama.sh",
+    paths: ["crates/**", "Cargo.*", "rustfmt.toml", "scripts/fetch-llama.sh",
             "scripts/llama.cpp-no-logits.patch", ".github/workflows/rust.yml"]
 
 permissions:
@@ -47,7 +47,7 @@ jobs:
           path: |
             ~/.cargo/registry
             target
-          key: ${{ runner.os }}-${{ matrix.features }}-${{ hashFiles('Cargo.lock', 'scripts/build-llama.sh', 'scripts/llama.cpp-no-logits.patch') }}
+          key: ${{ runner.os }}-${{ matrix.features }}-${{ hashFiles('Cargo.lock', 'scripts/fetch-llama.sh', 'scripts/llama.cpp-no-logits.patch') }}
       - run: cargo fmt --check
       - run: cargo clippy --release --features "${{ matrix.features }}" -- -D warnings
       - run: cargo test --release --features "${{ matrix.features }}"

@@ -1,10 +1,10 @@
 #!/bin/bash
 # Fetches llama.cpp (MIT) at the pinned tag into Vendor/llama.cpp and applies scripts/llama.cpp-no-logits.patch, for
-# the Rust build (crates/llama-sys builds it with CMake). Uses the same TAG as scripts/build-llama.sh: both builds must
-# make the same vectors, which the reference vector test checks. Does nothing when the source is already there.
+# the Rust build (crates/llama-sys builds it with CMake). A new TAG must make the same vectors, which the reference vector
+# test checks (crates/showme-embed/tests/reference). Does nothing when the source is already there.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-TAG=$(sed -n 's/^TAG=\([^ ]*\).*/\1/p' scripts/build-llama.sh)
+TAG=b11461   # the first tags with EmbeddingGemma 2 (text + vision + audio) are b11452+
 PATCH=scripts/llama.cpp-no-logits.patch
 SOURCE=Vendor/llama.cpp
 

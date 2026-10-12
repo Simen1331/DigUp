@@ -25,7 +25,7 @@ pub const BUDGETS: [u32; 5] = [70, 140, 280, 560, 1120];
 
 /// Which vectors this pipeline makes (the model files, llama.cpp, the resizing here, the prompts). It changes only
 /// when the vectors do: every llama.cpp update must reproduce the reference vectors
-/// (Tests/LlamaRuntimeTests/Reference), or come with a new version here (then every index embeds again). DigUp's
+/// (crates/showme-embed/tests/reference), or come with a new version here (then every index embeds again). DigUp's
 /// llama.cpp b11461 on Metal made version 1.
 pub const VECTOR_VERSION: u32 = 1;
 

@@ -1,5 +1,5 @@
 //! The vectors this build makes for fixed inputs, against the ones `VECTOR_VERSION` stands for: DigUp's
-//! Tests/LlamaRuntimeTests/Reference/vectors.json, made by llama.cpp on a Mac's GPU. Indexes record that version, so
+//! tests/reference/vectors.json, made by llama.cpp on a Mac's GPU. Indexes record that version, so
 //! every llama.cpp update, and every backend (CPU, Vulkan, CUDA), must pass this. Needs the model files; skipped
 //! without them (`showme download`).
 
@@ -23,7 +23,7 @@ struct Reference {
 }
 
 fn folder() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Tests/LlamaRuntimeTests/Reference")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/reference")
 }
 
 #[test]

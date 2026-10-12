@@ -1,24 +1,8 @@
-# Build output
-.build/
-.swiftpm/
-build.noindex/
+# llama.cpp, fetched by scripts/fetch-llama.sh
 /Vendor/
-
-# Dev runs (scripts/dev-run.sh): their indexes, models and settings
-.dev/
-
-# Python: the reference worker's environment
-worker/.venv/
-__pycache__/
-*.pyc
-
-# Your signing identity for local builds (see build.sh)
-.sign-id
 
 # Evals that name your own files
 evals/*.local.json
-
-.DS_Store
 
 # Rust
 /target/

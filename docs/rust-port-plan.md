@@ -66,7 +66,7 @@ Prosesser på Linux:
 | Login item (ServiceManagement) | `systemctl --user enable showme` |
 | `~/Library/Application Support/DigUp` | `$XDG_DATA_HOME/showme` (modell + indeks), `$XDG_CONFIG_HOME/showme/config.toml` |
 | Hoppe over `~/Library`, app-bundler, iCloud-plassholdere | hoppe over `~/.cache`, `~/.local/share/Steam`, `~/.var`, Flatpak, `/proc`-lignende monteringspunkter |
-| Python/MLX-referansen | dropp; referansevektorene i `Tests/LlamaRuntimeTests/Reference` brukes som fasit (cosinus ≥ 0,999) |
+| Python/MLX-referansen | dropp; referansevektorene i `crates/showme-embed/tests/reference` brukes som fasit (cosinus ≥ 0,999) |
 
 ## Faser
 
@@ -79,7 +79,7 @@ Hver fase slutter med noe som kjører og kan testes.
 *Ferdig når:* `showme index ~/Documents && showme search "…"` fungerer, og evalene i `evals/` gir omtrent samme tall som på Mac.
 
 **Fase 2: Bilder, PDF, lyd og video.** Bilder med EXIF og HEIC, OCR på skjermbilder, PDF side for side (med lange filer i to omganger), lydvinduer på 30 sek og videorammer med deduplisering via average hash.
-*Ferdig når:* eksempelfilene i `scripts/testbed` blir funnet.
+*Ferdig når:* eksempelfilene i `scripts/testbed` blir funnet. (Testbed-skriptene var Mac-spesifikke og er fjernet sammen med Mac-koden.)
 
 **Fase 3: Daemon.** Socket-API, inotify med samling av hendelser, strømpolicy, systemd-enhet og `showme status --waybar`.
 *Ferdig når:* en ny fil er søkbar et par sekunder etter at den er lagret.
