@@ -130,6 +130,11 @@ Panel {
     close()
   }
 
+  function openSettings() {
+    Quickshell.execDetached(["bash", "-lc", "exec showme-panel --settings"])
+    close()
+  }
+
   function fileName(path) { return path.substring(path.lastIndexOf("/") + 1) }
 
   function folder(path) {
@@ -245,29 +250,59 @@ Panel {
       width: parent.width
       spacing: Style.space(8)
 
-      TextField {
-        id: field
+      Row {
         width: parent.width
-        placeholderText: "Describe what you're looking for"
-        foreground: root.foreground
-        font.family: root.fontFamily
+        spacing: Style.space(8)
 
-        onTextChanged: typing.restart()
+        TextField {
+          id: field
+          width: parent.width - settingsButton.width - parent.spacing
+          placeholderText: "Describe what you're looking for"
+          foreground: root.foreground
+          font.family: root.fontFamily
 
-        Keys.onPressed: function(event) {
-          if (event.key === Qt.Key_Escape) {
-            root.close()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Down) {
-            if (root.selectedIndex < root.hits.length - 1) root.selectedIndex++
-            event.accepted = true
-          } else if (event.key === Qt.Key_Up) {
-            if (root.selectedIndex > 0) root.selectedIndex--
-            event.accepted = true
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            if (event.modifiers & Qt.ShiftModifier) root.openWindow()
-            else root.openHit(root.selectedIndex)
-            event.accepted = true
+          onTextChanged: typing.restart()
+
+          Keys.onPressed: function(event) {
+            if (event.key === Qt.Key_Escape) {
+              root.close()
+              event.accepted = true
+            } else if (event.key === Qt.Key_Down) {
+              if (root.selectedIndex < root.hits.length - 1) root.selectedIndex++
+              event.accepted = true
+            } else if (event.key === Qt.Key_Up) {
+              if (root.selectedIndex > 0) root.selectedIndex--
+              event.accepted = true
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              if (event.modifiers & Qt.ShiftModifier) root.openWindow()
+              else root.openHit(root.selectedIndex)
+              event.accepted = true
+            }
+          }
+        }
+
+        // ShowMe's settings: the folders it searches, and the rest.
+        Rectangle {
+          id: settingsButton
+          width: field.height
+          height: field.height
+          radius: Style.cornerRadius
+          color: settingsArea.containsMouse ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
+
+          Text {
+            anchors.centerIn: parent
+            text: "󰒓"
+            color: settingsArea.containsMouse ? Color.accent : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.title
+          }
+
+          MouseArea {
+            id: settingsArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.openSettings()
           }
         }
       }
