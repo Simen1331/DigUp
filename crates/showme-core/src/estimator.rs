@@ -11,9 +11,10 @@ use crate::model::{FileKind, IndexOptions};
 use crate::store::Candidate;
 use crate::{media, pdf};
 
-/// Seconds of indexing per unit, measured on an M4 Pro with llama.cpp (Q8_0) while files are read alongside the
-/// model (DigUp's numbers, 2026-10-07). A desktop GPU through Vulkan is about as fast; on the CPU, expect several
-/// times longer.
+/// Seconds of indexing per unit, measured on an RTX 3060 through Vulkan with a Ryzen 7 3700X, llama.cpp (Q8_0) and
+/// files read alongside the model (2026-10-12). An M4 Pro (DigUp's numbers) takes 2–4 times longer for pictures,
+/// pages and code, and an eighth of the time for screenshots, whose OCR (Tesseract, eng+nor, 4K) sets the pace here.
+/// On the CPU, expect several times longer.
 #[derive(Debug, Clone, Copy)]
 pub struct Costs {
     pub image: f64,
@@ -31,13 +32,13 @@ pub struct Costs {
 impl Default for Costs {
     fn default() -> Self {
         Costs {
-            image: 0.12,
-            screenshot: 0.32,
-            pdf_page: 0.09,
-            doc_chunk: 0.095,
-            audio_second: 0.0089,
-            video_second: 0.019,
-            code_stretch: 0.037,
+            image: 0.06,
+            screenshot: 2.5,
+            pdf_page: 0.04,
+            doc_chunk: 0.025,
+            audio_second: 0.005,
+            video_second: 0.017,
+            code_stretch: 0.017,
         }
     }
 }
@@ -158,10 +159,11 @@ pub fn estimate(candidates: &[Candidate], options: &IndexOptions, costs: &Costs)
             estimate.later_seconds += (all - first) as f64 * costs.pdf_page;
         }
     }
-    let audio: f64 = measured(&of(FileKind::Audio), duration).iter().sum();
+    // A fold from 0.0: an empty f64 sum is -0.0, which JSON shows.
+    let audio: f64 = measured(&of(FileKind::Audio), duration).iter().fold(0.0, |sum, seconds| sum + seconds);
     estimate.audio_seconds = audio;
     estimate.seconds += audio * costs.audio_second;
-    let video: f64 = measured(&of(FileKind::Video), duration).iter().sum();
+    let video: f64 = measured(&of(FileKind::Video), duration).iter().fold(0.0, |sum, seconds| sum + seconds);
     estimate.video_seconds = video;
     estimate.seconds += video * costs.video_second;
     estimate
