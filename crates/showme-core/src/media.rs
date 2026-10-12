@@ -180,6 +180,10 @@ pub fn write_wav(samples: &[i16], out: &Path) -> Result<(), ExtractError> {
 /// Samples a frame every `interval` seconds (more apart in a very long video: at most `max_frames`) and keeps one per
 /// shot: a frame that looks like the previous kept one (8×8 average hash within 4 bits) only extends it. Screen
 /// recordings and lectures shrink a lot. Returns the frames, the duration, and whether the video has sound.
+///
+/// Only keyframes are decoded, which is about four times faster than decoding every frame (and faster than NVDEC,
+/// which decodes them all too). A video whose keyframes are too far apart for that (a screen recording with a long
+/// GOP) is decoded in full instead.
 pub fn keyframes(
     path: &Path,
     interval: f64,
@@ -194,36 +198,15 @@ pub fn keyframes(
     let step = interval.max(probe.duration / max_frames as f64);
     let first = 0.5f64.min(probe.duration / 2.0);
     let frames_folder = folder.join("frames");
-    fs::create_dir_all(&frames_folder).map_err(unreadable)?;
-    // One pass: ffmpeg turns the video upright, takes a frame every `step` from `first`, and scales it down.
-    let output = Command::new("ffmpeg")
-        .args(["-v", "error", "-nostdin", "-ss", &format!("{first:.3}"), "-i"])
-        .arg(path)
-        .args([
-            "-an",
-            "-vf",
-            &format!(
-                "fps=1/{step},scale='min({max_pixel},iw)':'min({max_pixel},ih)':force_original_aspect_ratio=decrease"
-            ),
-            "-q:v",
-            "3",
-        ])
-        .arg(frames_folder.join("%06d.jpg"))
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|_| ExtractError::Unreadable("ffmpeg isn't installed".into()))?;
-    if !output.status.success() {
-        return Err(unreadable(
-            String::from_utf8_lossy(&output.stderr).lines().next().unwrap_or("frame extraction failed").to_string(),
-        ));
+    let wanted = ((probe.duration - first) / step).ceil().max(1.0) as usize;
+    // No keyframe at all from `first` on makes ffmpeg fail; the full pass says why if something else is wrong.
+    let mut sampled = sample_frames(path, true, first, step, max_pixel, &frames_folder).unwrap_or_default();
+    if sampled.len() * 2 < wanted {
+        sampled = sample_frames(path, false, first, step, max_pixel, &frames_folder)?;
     }
-    let mut files: Vec<_> =
-        fs::read_dir(&frames_folder).map_err(unreadable)?.flatten().map(|entry| entry.path()).collect();
-    files.sort();
     let mut frames: Vec<Piece> = Vec::new();
     let mut last_hash: Option<u64> = None;
-    for (index, file) in files.into_iter().enumerate() {
-        let time = first + index as f64 * step;
+    for (index, (file, time)) in sampled.into_iter().enumerate() {
         if index >= max_frames || time >= probe.duration {
             let _ = fs::remove_file(&file);
             continue;
@@ -242,6 +225,52 @@ pub fn keyframes(
         frames[index - 1].end = frames[index].start;
     }
     Ok((frames, probe.duration, probe.audio))
+}
+
+/// One ffmpeg pass that turns the video upright, takes the first frame from `first` seconds on and then one at least
+/// `step` after the last taken, and scales them down into `folder` (emptied first). With `keyframes_only`, only
+/// keyframes are decoded and taken. Returns each frame's file and its real time, which `showinfo` reports.
+fn sample_frames(
+    path: &Path,
+    keyframes_only: bool,
+    first: f64,
+    step: f64,
+    max_pixel: u32,
+    folder: &Path,
+) -> Result<Vec<(std::path::PathBuf, f64)>, ExtractError> {
+    let _ = fs::remove_dir_all(folder);
+    fs::create_dir_all(folder).map_err(unreadable)?;
+    let mut command = Command::new("ffmpeg");
+    command.args(["-hide_banner", "-nostats", "-v", "info", "-nostdin"]);
+    if keyframes_only {
+        command.args(["-skip_frame", "nokey"]);
+    }
+    let filters = format!(
+        "setpts=PTS-STARTPTS,\
+         select='gte(t\\,{first})*(isnan(prev_selected_t)+gte(t-prev_selected_t\\,{step}))',\
+         scale='min({max_pixel},iw)':'min({max_pixel},ih)':force_original_aspect_ratio=decrease,showinfo"
+    );
+    let output = command
+        .arg("-i")
+        .arg(path)
+        .args(["-an", "-vf", &filters, "-fps_mode", "passthrough", "-q:v", "3"])
+        .arg(folder.join("%06d.jpg"))
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|_| ExtractError::Unreadable("ffmpeg isn't installed".into()))?;
+    let log = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        let reason = log.lines().find(|line| line.contains("rror")).or_else(|| log.lines().last());
+        return Err(unreadable(reason.unwrap_or("frame extraction failed").to_string()));
+    }
+    let times: Vec<f64> = log
+        .lines()
+        .filter(|line| line.contains("Parsed_showinfo"))
+        .filter_map(|line| line.split_once("pts_time:")?.1.split_whitespace().next()?.parse().ok())
+        .collect();
+    let mut files: Vec<_> = fs::read_dir(folder).map_err(unreadable)?.flatten().map(|entry| entry.path()).collect();
+    files.sort();
+    Ok(files.into_iter().zip(times).collect())
 }
 
 #[cfg(test)]
@@ -279,15 +308,8 @@ mod tests {
         assert_eq!(pieces[0].end, 30.0);
     }
 
-    #[test]
-    fn keyframes_keep_one_frame_per_shot() {
-        if !have_ffmpeg() {
-            eprintln!("skipped: no ffmpeg");
-            return;
-        }
-        let dir = tempfile::tempdir().unwrap();
-        let video = dir.path().join("clip.mp4");
-        // 12 s: 6 s of one still picture, then 6 s of another, with a tone.
+    /// 12 s: 6 s of one still picture, then 6 s of another, with a tone. `encoder` adds x264 options.
+    fn two_shot_clip(video: &Path, encoder: &[&str]) {
         let status = Command::new("ffmpeg")
             .args([
                 "-v",
@@ -314,16 +336,46 @@ mod tests {
                 "yuv420p",
                 "-shortest",
             ])
-            .arg(&video)
+            .args(encoder)
+            .arg(video)
             .status()
             .unwrap();
         assert!(status.success());
+    }
+
+    #[test]
+    fn keyframes_keep_one_frame_per_shot() {
+        if !have_ffmpeg() {
+            eprintln!("skipped: no ffmpeg");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("clip.mp4");
+        two_shot_clip(&video, &["-g", "25"]); // a keyframe every second
         let (frames, duration, audio) = keyframes(&video, 3.0, 1024, 1200, dir.path()).unwrap();
         assert!(audio);
         assert!((duration - 12.0).abs() < 0.2, "{duration}");
-        assert_eq!(frames[0].start, 0.5);
+        // Keyframes at whole seconds: the first from 0.5 s on, and the frame times are theirs.
+        assert_eq!(frames[0].start, 1.0);
+        assert!(frames.iter().all(|frame| frame.start.fract() == 0.0), "{frames:?}");
         assert!(frames.len() >= 2 && frames.len() < 4, "{frames:?}"); // the still shot is one frame
         assert_eq!(frames[0].end, frames[1].start);
         assert_eq!(image::image_dimensions(&frames[0].path).unwrap(), (640, 360));
+    }
+
+    #[test]
+    fn keyframes_decode_every_frame_when_keyframes_are_far_apart() {
+        if !have_ffmpeg() {
+            eprintln!("skipped: no ffmpeg");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("recording.mp4");
+        two_shot_clip(&video, &["-g", "300", "-sc_threshold", "0"]); // one keyframe, at the start
+        let (frames, _, _) = keyframes(&video, 3.0, 1024, 1200, dir.path()).unwrap();
+        // The first frame from 0.5 s on (at 25 fps: 0.52 s), and both shots.
+        assert!((frames[0].start - 0.52).abs() < 0.001, "{frames:?}");
+        assert!(frames.len() >= 2 && frames.len() < 4, "{frames:?}");
+        assert!(frames.iter().any(|frame| frame.start >= 6.0), "{frames:?}");
     }
 }
