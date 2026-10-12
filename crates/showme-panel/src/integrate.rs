@@ -67,15 +67,49 @@ pub fn enable_services() -> Result<()> {
 
 // The key.
 
-/// The file Omarchy keeps its keys in (or Hyprland's own).
-pub fn hyprland_file() -> PathBuf {
-    let bindings = config("hypr/bindings.conf");
-    if bindings.exists() { bindings } else { config("hypr/hyprland.conf") }
+/// Whether Hyprland reads a Lua config (Hyprland 0.55 on, Omarchy 4), which it prefers to `hyprland.conf`.
+fn lua_config() -> bool {
+    config("hypr/hyprland.lua").exists()
 }
 
-/// The line that binds `key` ("SUPER, D") to the panel.
+/// The file Omarchy keeps its keys in (or Hyprland's own): `bindings.lua` in Omarchy 4, `bindings.conf` before.
+pub fn hyprland_file() -> PathBuf {
+    let (bindings, main) = if lua_config() {
+        ("hypr/bindings.lua", "hypr/hyprland.lua")
+    } else {
+        ("hypr/bindings.conf", "hypr/hyprland.conf")
+    };
+    let bindings = config(bindings);
+    if bindings.exists() { bindings } else { config(main) }
+}
+
+/// The line that binds `key` ("SUPER, D") to the panel, in the config Hyprland reads.
 pub fn bind_line(key: &str) -> String {
+    if lua_config() { lua_bind_line(key) } else { conf_bind_line(key) }
+}
+
+fn conf_bind_line(key: &str) -> String {
     format!("bindd = {}, ShowMe, exec, {TOGGLE}", key.trim())
+}
+
+/// "SUPER SHIFT, F" as Hyprland's Lua writes keys: "SUPER + SHIFT + F".
+fn lua_key(key: &str) -> String {
+    let (mods, name) = key.split_once(',').unwrap_or(("", key));
+    mods.split([' ', '_', '+']).filter(|word| !word.is_empty()).chain([name.trim()]).collect::<Vec<_>>().join(" + ")
+}
+
+fn lua_bind_line(key: &str) -> String {
+    format!("hl.bind(\"{}\", hl.dsp.exec_cmd(\"{TOGGLE}\"), {{ description = \"ShowMe\" }})", lua_key(key))
+}
+
+/// What goes in a Lua config: the key, blur behind the panel (as behind Omarchy's menus), and the big window floating.
+fn lua_lines(key: &str) -> String {
+    format!(
+        "\n-- ShowMe: search your files\n{}\n\
+         hl.layer_rule({{ match = {{ namespace = \"^showme$\" }}, blur = true, ignore_alpha = 0 }})\n\
+         hl.window_rule({{ match = {{ class = \"^dev\\\\.showme\\\\.Panel$\" }}, float = true, size = {{ 1280, 820 }} }})\n",
+        lua_bind_line(key)
+    )
 }
 
 /// "SUPER SHIFT, F" → (the modifier mask Hyprland reports, the key), or None when it doesn't read as a key.
@@ -127,7 +161,15 @@ pub fn bound_key() -> Option<String> {
 }
 
 fn bound_key_in(text: &str) -> Option<String> {
-    text.lines().map(str::trim).filter(|line| !line.starts_with('#') && line.contains(TOGGLE)).find_map(|line| {
+    let lines = text.lines().map(str::trim).filter(|line| !line.starts_with('#') && !line.starts_with("--"));
+    lines.filter(|line| line.contains(TOGGLE)).find_map(|line| {
+        // Lua: hl.bind("SUPER + ALT + D", …) or Omarchy's o.bind("SUPER + ALT + D", …).
+        if line.starts_with("hl.bind(") || line.starts_with("o.bind(") {
+            let quoted = line.split('"').nth(1)?;
+            let (mods, name) = quoted.rsplit_once('+')?;
+            let mods: Vec<&str> = mods.split('+').map(str::trim).filter(|word| !word.is_empty()).collect();
+            return Some(format!("{}, {}", mods.join(" "), name.trim()));
+        }
         let (_, rest) = line.split_once('=')?;
         let mut parts = rest.split(',').map(str::trim);
         Some(format!("{}, {}", parts.next()?, parts.next()?))
@@ -145,14 +187,35 @@ pub fn add_key(key: &str) -> Result<Option<PathBuf>> {
         bail!("{} already has a key for ShowMe", tilde(&file));
     }
     let copy = if file.exists() { Some(backup(&file)?) } else { None };
-    let mut text = text;
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
+    let mut changed = text.clone();
+    if !changed.is_empty() && !changed.ends_with('\n') {
+        changed.push('\n');
     }
-    text.push_str(&format!("\n# ShowMe: search your files\n{}\n", bind_line(key)));
+    let lua = lua_config();
+    if lua {
+        changed.push_str(&lua_lines(key));
+    } else {
+        changed.push_str(&format!("\n# ShowMe: search your files\n{}\n", conf_bind_line(key)));
+    }
     std::fs::create_dir_all(file.parent().unwrap())?;
-    std::fs::write(&file, text)?;
+    std::fs::write(&file, changed)?;
+    // A Lua config that doesn't load leaves Hyprland without the user's settings: put the file back if it complains.
+    if lua && let Some(errors) = hyprland_errors() {
+        std::fs::write(&file, text)?;
+        run("hyprctl", &["reload"]);
+        bail!("Hyprland didn't take the lines, so {} is as it was: {errors}", tilde(&file));
+    }
     Ok(copy)
+}
+
+/// Has Hyprland read its config again, and returns what it complains about; None when all is well or it isn't running.
+fn hyprland_errors() -> Option<String> {
+    if !run("hyprctl", &["reload"]) {
+        return None;
+    }
+    let output = Command::new("hyprctl").arg("configerrors").stderr(Stdio::null()).output().ok()?;
+    let errors = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!errors.is_empty()).then_some(errors)
 }
 
 // Waybar.
@@ -280,9 +343,24 @@ mod tests {
         assert_eq!(parse_key("CTRL ALT, space"), Some((12, "space".into())));
         assert_eq!(parse_key("SUPER D"), None);
         assert_eq!(parse_key("HYPER, D"), None);
-        assert_eq!(bind_line(" SUPER, D "), "bindd = SUPER, D, ShowMe, exec, showme-panel --toggle");
+        assert_eq!(conf_bind_line(" SUPER, D "), "bindd = SUPER, D, ShowMe, exec, showme-panel --toggle");
         let text = "bindd = SUPER, F, Files, exec, nautilus\n# bind = SUPER, X, exec, showme-panel --toggle\nbindd = SUPER ALT, D, ShowMe, exec, showme-panel --toggle\n";
         assert_eq!(bound_key_in(text).as_deref(), Some("SUPER ALT, D"));
+    }
+
+    #[test]
+    fn keys_in_lua_as_hyprland_0_55_writes_them() {
+        assert_eq!(lua_key(" SUPER SHIFT, F "), "SUPER + SHIFT + F");
+        assert_eq!(
+            lua_bind_line("SUPER, D"),
+            "hl.bind(\"SUPER + D\", hl.dsp.exec_cmd(\"showme-panel --toggle\"), { description = \"ShowMe\" })"
+        );
+        let lines = lua_lines("SUPER ALT, D");
+        assert!(lines.contains("namespace = \"^showme$\" }, blur = true, ignore_alpha = 0"));
+        assert!(lines.contains("class = \"^dev\\\\.showme\\\\.Panel$\""));
+        assert_eq!(bound_key_in(&lines).as_deref(), Some("SUPER ALT, D"));
+        let text = "-- o.bind(\"SUPER + X\", \"ShowMe\", \"showme-panel --toggle\")\no.bind(\"SUPER + CTRL + D\", \"ShowMe\", \"showme-panel --toggle\")\n";
+        assert_eq!(bound_key_in(text).as_deref(), Some("SUPER CTRL, D"));
     }
 
     #[test]
