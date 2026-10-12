@@ -1,9 +1,10 @@
 //! How the panel looks: like Walker, in the colors of the current Omarchy theme.
 //!
-//! Omarchy keeps the active theme at `~/.config/omarchy/current/theme`, and its `walker.css` defines the colors Walker
-//! uses (`@define-color base …`, `text`, `border`, `selected-text`…). The panel loads that file as it is, under its own
-//! stylesheet, which only names those colors. Without Omarchy it falls back to a dark palette of its own. The theme
-//! folder is watched: switching themes restyles an open panel.
+//! The panel's stylesheet only names a few colors (`@base`, `text`, `border`, `selected-text`), which come from the
+//! active Omarchy theme. Omarchy 4 keeps it at `~/.local/state/omarchy/current/theme`, whose `colors.toml` holds the
+//! palette the panel turns into those colors, as Omarchy's own menus use it. Older Omarchy kept it at
+//! `~/.config/omarchy/current/theme`, with a `walker.css` that defines them already. Without Omarchy the panel falls back
+//! to a dark palette of its own. The theme folder is watched: switching themes restyles an open panel.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -190,11 +191,28 @@ window.showme-settings {
 }
 "#;
 
+/// The folders Omarchy keeps its current theme in: Omarchy 4's first, then the one before.
+fn omarchy_current() -> Vec<PathBuf> {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else { return Vec::new() };
+    vec![home.join(".local/state/omarchy/current"), home.join(".config/omarchy/current")]
+}
+
 /// The active Omarchy theme's folder, when there is one.
 fn omarchy_theme() -> Option<PathBuf> {
-    let home = PathBuf::from(std::env::var_os("HOME")?);
-    let folder = home.join(".config/omarchy/current/theme");
-    folder.exists().then_some(folder)
+    omarchy_current().into_iter().map(|current| current.join("theme")).find(|folder| folder.exists())
+}
+
+/// The panel's colors from a theme's `colors.toml`, and whether it's a light theme; None when it lacks the colors.
+fn colors_from_palette(text: &str) -> Option<(String, bool)> {
+    let palette: toml::Table = text.parse().ok()?;
+    let color = |name: &str| palette.get(name).and_then(|value| value.as_str());
+    let (background, foreground, accent) = (color("background")?, color("foreground")?, color("accent")?);
+    let css = format!(
+        "@define-color base {background};\n@define-color background {background};\n\
+         @define-color text {foreground};\n@define-color foreground {foreground};\n\
+         @define-color border {accent};\n@define-color selected-text {accent};\n"
+    );
+    Some((css, color("mode") == Some("light")))
 }
 
 /// The font Walker and the terminal use (`fc-match monospace`), unless the settings name one.
@@ -236,24 +254,49 @@ pub fn load(settings: &showme_core::settings::PanelSettings) -> Theme {
         let colors = colors.clone();
         move || {
             let theme = omarchy_theme().filter(|_| use_omarchy);
-            // Buttons, switches and lists follow the theme's mode (Omarchy marks light themes with `light.mode`).
+            let palette = theme
+                .as_ref()
+                .and_then(|folder| std::fs::read_to_string(folder.join("colors.toml")).ok())
+                .and_then(|text| colors_from_palette(&text));
+            // Buttons, switches and lists follow the theme's mode (`mode` in `colors.toml`, or older Omarchy's
+            // `light.mode`).
             if let (Some(folder), Some(settings)) = (&theme, gtk::Settings::default()) {
-                settings.set_gtk_application_prefer_dark_theme(!folder.join("light.mode").exists());
+                let light = palette.as_ref().map_or_else(|| folder.join("light.mode").exists(), |(_, light)| *light);
+                settings.set_gtk_application_prefer_dark_theme(!light);
             }
             let walker = theme.map(|folder| folder.join("walker.css")).filter(|file| file.exists());
-            match walker {
-                Some(file) if use_omarchy => colors.load_from_path(file),
-                _ => colors.load_from_string(""),
+            match (palette, walker) {
+                (Some((css, _)), _) => colors.load_from_string(&css),
+                (None, Some(file)) => colors.load_from_path(file),
+                (None, None) => colors.load_from_string(""),
             }
         }
     };
     reload();
-    // Omarchy switches themes by pointing `current/theme` elsewhere: watch `current`.
-    let monitor = std::env::var_os("HOME")
-        .map(|home| gio::File::for_path(PathBuf::from(home).join(".config/omarchy/current")))
-        .and_then(|folder| folder.monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE).ok());
+    // Omarchy switches themes by putting another folder at `current/theme`: watch `current`.
+    let monitor =
+        omarchy_current().into_iter().find(|current| current.exists()).map(gio::File::for_path).and_then(|folder| {
+            folder.monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE).ok()
+        });
     if let Some(monitor) = &monitor {
         monitor.connect_changed(move |_, _, _, _| reload());
     }
     Theme { _monitor: monitor }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn colors_come_from_the_palette() {
+        let palette = "mode = \"light\"\naccent = \"#7aa2f7\"\nbackground = \"#1a1b26\"\nforeground = \"#a9b1d6\"\n";
+        let (css, light) = colors_from_palette(palette).unwrap();
+        assert!(light);
+        assert!(css.contains("@define-color base #1a1b26;"));
+        assert!(css.contains("@define-color text #a9b1d6;"));
+        assert!(css.contains("@define-color border #7aa2f7;"));
+        assert!(css.contains("@define-color selected-text #7aa2f7;"));
+        assert_eq!(colors_from_palette("accent = \"#7aa2f7\""), None);
+    }
 }

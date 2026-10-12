@@ -2109,6 +2109,7 @@ dependencies = [
  "serde_json",
  "showme-core",
  "sourceview5",
+ "toml",
 ]
 
 [[package]]
