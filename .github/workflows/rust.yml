@@ -28,6 +28,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q libheif-dev tesseract-ocr ffmpeg libgtk-4-dev libgtksourceview-5-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             meson ninja-build libwayland-dev wayland-protocols
           # gtk4-layer-shell for the panel: not packaged in Ubuntu 24.04 (Arch has it).
           git clone -q --depth 1 --branch v1.1.1 https://github.com/wmww/gtk4-layer-shell /tmp/gtk4-layer-shell
