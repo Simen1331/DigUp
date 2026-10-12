@@ -1,0 +1,33 @@
+[package]
+name = "showme-core"
+description = "ShowMe's engine: crawler, rules, extractors, the index (SQLite + FTS5), search. No UI, no model."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["heif"]
+# HEIC/HEIF photos (iPhones and Samsung phones), through libheif.
+heif = ["dep:libheif-rs"]
+
+[dependencies]
+half = "2.7"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp", "tiff", "avif-native"] }
+kamadak-exif = "0.6"
+libheif-rs = { version = "3", optional = true, default-features = false, features = ["v1_17"] }
+pdfium-render = { version = "0.9", default-features = false, features = ["pdfium_7881", "image_025", "thread_safe"] }
+regex = "1.13"
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+anyhow = "1"
+thiserror = "2"
+unicode-general-category = "1.1"
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+quick-xml = "0.42"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3"

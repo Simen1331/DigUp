@@ -1,8 +1,8 @@
-# Frontendplan: søkepanel, Waybar og oppsett for Digger (fase 4)
+# Frontendplan: søkepanel, Waybar og oppsett for ShowMe (fase 4)
 
 Denne planen bygger på `docs/rust-port-plan.md`. Det som allerede er bestemt: GTK4 + gtk4-layer-shell, panelet åpnes
 med en Hyprland-tastebinding, en Waybar-modul erstatter menylinje-ikonet, fase 4 er panel og oppsett, fase 5 er pakking.
-Målet er at ingenting viktig fra DigUp går tapt, og at Digger føles som en del av Omarchy (Walker, Waybar, mako,
+Målet er at ingenting viktig fra DigUp går tapt, og at ShowMe føles som en del av Omarchy (Walker, Waybar, mako,
 temaene i `~/.config/omarchy`).
 
 ## 1. Hva DigUp-grensesnittet gjør i dag (det som må med)
@@ -50,7 +50,7 @@ Fra `Sources/DigUpApp/`:
 
 ## 2. Hva Rust-siden gir grensesnittet
 
-- `SearchHit` (`digger-core/src/searcher.rs`): `path, kind, score, z, cosine, keyword_rank, segment, segment_id, loc,
+- `SearchHit` (`showme-core/src/searcher.rs`): `path, kind, score, z, cosine, keyword_rank, segment, segment_id, loc,
   loc_end, excerpt («»), modified, size, info, focus`. `info` er et `BTreeMap<String,String>` med `width`, `height`,
   `taken`, `duration`, `pages`, `read_to`, `chunks`, `lines`, `cells`, `repo`. Daemonen sender dette videre som
   `protocol::Hit` (med `strong` i tillegg).
@@ -59,22 +59,22 @@ Fra `Sources/DigUpApp/`:
 - `FolderSelection` (`folder_selection.rs`) har allerede logikken bak avkrysningene: `mark()` gir Mark (alt, noe, ingen),
   og `set_folder`, `set_subfolder`, `unskip`, `folders()` og `effective_skips()` finnes. Mappevelgeren kan bruke dette
   direkte.
-- `digger-core` er uten modell og uten llama (pdfium lastes dynamisk, ffmpeg kjøres som underprosess), så panelet kan
+- `showme-core` er uten modell og uten llama (pdfium lastes dynamisk, ffmpeg kjøres som underprosess), så panelet kan
   lenke mot det for typer, bildedekoding (HEIC og EXIF-rotasjon) og PDF-rendering uten å dra inn GPU-stakken.
-- **Mangler:** estimatoren (`digger estimate --json`, DigUps `Estimates.swift`) er ikke portert. Det finnes heller
+- **Mangler:** estimatoren (`showme estimate --json`, DigUps `Estimates.swift`) er ikke portert. Det finnes heller
   ingen funksjon som rendrer én PDF-side med markeringer (DigUp: `Previews.page`), og ingen som henter ut én videoramme
-  ved et gitt tidspunkt. De to siste er små tillegg i `digger-core` (pdfium har tekstsøk med tegnbokser).
+  ved et gitt tidspunkt. De to siste er små tillegg i `showme-core` (pdfium har tekstsøk med tegnbokser).
 
 ## 3. Arkitektur
 
-**Anbefaling: en egen binær, `digger-panel` (GTK4), som holder seg i minnet og snakker med daemonen over
-`$XDG_RUNTIME_DIR/digger.sock`.**
+**Anbefaling: en egen binær, `showme-panel` (GTK4), som holder seg i minnet og snakker med daemonen over
+`$XDG_RUNTIME_DIR/showme.sock`.**
 
 ```
-Hyprland-bind ──► digger-panel --toggle ──(GApplication/D-Bus)──► digger-panel (bor i minnet, vindu skjult)
+Hyprland-bind ──► showme-panel --toggle ──(GApplication/D-Bus)──► showme-panel (bor i minnet, vindu skjult)
                                                                      │  JSON-linjer
-Waybar ◄── digger status --waybar --follow ◄──────────┐              ▼
-                                                     digger daemon (systemd --user): indeks, embedding, søk
+Waybar ◄── showme status --waybar --follow ◄──────────┐              ▼
+                                                     showme daemon (systemd --user): indeks, embedding, søk
 mako ◄── org.freedesktop.Notifications ◄──────────────┘
 ```
 
@@ -90,9 +90,9 @@ Alternativer jeg har vurdert:
 
 En kald GTK4-start tar typisk 150–300 ms, så målet krever at panelet bor i minnet.
 
-- `digger-panel` er en `gtk::Application` med app-id `dev.digger.Panel`, startet av en `digger-panel.service`
+- `showme-panel` er en `gtk::Application` med app-id `dev.showme.Panel`, startet av en `showme-panel.service`
   (`--user`, `PartOf=graphical-session.target`) eller `exec-once`. Vinduet bygges én gang og holdes skjult.
-- Tastebindingen kjører `digger-panel --toggle`. En ny instans finner primærinstansen over D-Bus
+- Tastebindingen kjører `showme-panel --toggle`. En ny instans finner primærinstansen over D-Bus
   (`HANDLES_COMMAND_LINE`), sender `toggle` og avslutter uten å åpne en Wayland-tilkobling. Det tar rundt 10–20 ms.
   Kjører ikke panelet, blir den nye prosessen selv primærinstans og viser vinduet. Det er en kald start, men bare
   én gang.
@@ -104,11 +104,11 @@ En kald GTK4-start tar typisk 150–300 ms, så målet krever at panelet bor i m
 
 ### Protokoll (JSON-linjer): det som finnes, og det panelet trenger i tillegg
 
-Daemonen (under arbeid i `crates/digger/src/protocol.rs`) har allerede JSON-linjer med `{"op": …}`: `search {query,
+Daemonen (under arbeid i `crates/showme/src/protocol.rs`) har allerede JSON-linjer med `{"op": …}`: `search {query,
 limit, kinds, prefix_last, words_only}`, `status`, `watch` (strøm av status), `pause`, `resume`, `sync`, `reload` og
 `quit`. Svaret er `{ok, error, hits, vectors, ms, status}`, og `Hit` har `strong` (under halvparten av toppskåren =
 weaker) og alle feltene fra `SearchHit`. Daemonen tolker `code:` selv. Panelet bygger på dette og trenger i tillegg
-(forslag; flytt gjerne `protocol.rs` til `digger-core::proto`, så panelet slipper å lenke mot CLI-craten):
+(forslag; flytt gjerne `protocol.rs` til `showme-core::proto`, så panelet slipper å lenke mot CLI-craten):
 
 ```jsonc
 // 1. search: mer i svaret
@@ -149,17 +149,17 @@ Regler som gjør to-fasesøket raskt:
 **Miniatyrbilder og forhåndsvisning lages i panelet, ikke i daemonen.** Det sparer en rundtur over socketen, daemonen
 slipper konkurranse med indekseringen, og forhåndsvisningen virker selv om daemonen er nede. Først brukes
 freedesktop-cachen (`~/.cache/thumbnails/{normal,large}/<md5(uri)>.png`, som Nautilus allerede har fylt). Ellers lages
-bildet med `digger-core` (bilder), `ffmpeg -ss` (videoramme) eller pdfium (side) på en trådpool, og skrives tilbake til
+bildet med `showme-core` (bilder), `ffmpeg -ss` (videoramme) eller pdfium (side) på en trådpool, og skrives tilbake til
 samme cache etter spesifikasjonen (`Thumb::URI`, `Thumb::MTime`). Kode får filtype-ikonet fra ikontemaet via
 `gio::content_type_guess`.
 
 ## 4. Søkepanelet
 
-Et layer-shell-vindu: laget `Overlay`, namespace `digger`, forankret øverst med toppmarg ≈ 16 % av skjermhøyden
+Et layer-shell-vindu: laget `Overlay`, namespace `showme`, forankret øverst med toppmarg ≈ 16 % av skjermhøyden
 og sentrert, på den fokuserte skjermen. Det vokser nedover som i DigUp (56 → 480 px). `KeyboardMode::Exclusive`
 mens det vises, som Walker. Et klikk utenfor lukker panelet (en gjennomsiktig bakgrunnsflate, eller lukk ved
 fokustap; begge må testes i Hyprland).
-Omarchy-snutt: `layerrule = blur, digger` og `layerrule = ignorezero, digger` (syntaksen avhenger av
+Omarchy-snutt: `layerrule = blur, showme` og `layerrule = ignorezero, showme` (syntaksen avhenger av
 Hyprland-versjonen).
 
 ```
@@ -185,9 +185,9 @@ Hyprland-versjonen).
 Listen bruker `gtk::ListView` med en `SectionModel` (GTK ≥ 4.12) for gruppeoverskriftene, slik at bare synlige rader
 lages. Raden for «weaker matches» er en vanlig rad som kan velges.
 
-### Tastatur (DigUp → Digger)
+### Tastatur (DigUp → ShowMe)
 
-| DigUp | Digger | Hva |
+| DigUp | ShowMe | Hva |
 |---|---|---|
 | ⇧⌘Space | Hyprland-bind (se §8 og spørsmål 1) | vis/skjul panelet |
 | ↓ ↑ | ↓ ↑, også Ctrl+J/K og Ctrl+N/P | flytt valget (vim-vennlig, som i Walker) |
@@ -226,19 +226,19 @@ når de starter på arabisk (LRM foran, som i DigUp).
   med knappen Choose Code Folders…, som åpner innstillingene på Code-fanen.
 - Typefiltre (Alt+1–7) er en ny snarvei i panelet. I DigUp fantes de bare i vinduet. De sender `kinds` til daemonen.
   «Show all N video…» bytter til det filteret i stedet for å åpne et nytt vindu.
-- Tilstander og bunnlinjetekster tas direkte fra `SearchPanelView.swift` (§1), pluss to nye: **«Digger daemon isn't
-  running»** med knappen *Start* (`systemctl --user start digger`) og **«Downloading the model (42%): words only»**.
+- Tilstander og bunnlinjetekster tas direkte fra `SearchPanelView.swift` (§1), pluss to nye: **«ShowMe daemon isn't
+  running»** med knappen *Start* (`systemctl --user start showme`) og **«Downloading the model (42%): words only»**.
 
 ## 5. Forhåndsvisning (erstatter Quick Look)
 
 Ruten til høyre viser alltid valgt rad. Space forstørrer den til hele panelet (420 → ca. 760 px) og starter
 avspilling der det gir mening.
 
-- **Bilder/skjermbilder:** `gtk::Picture` med en `gdk::MemoryTexture` fra `digger-core::images::decode` + `fit`
+- **Bilder/skjermbilder:** `gtk::Picture` med en `gdk::MemoryTexture` fra `showme-core::images::decode` + `fit`
   (HEIC og EXIF-rotasjon blir som i indeksen).
 - **PDF:** siden `loc` rendres med pdfium i ønsket bredde. Søkeordene (`foundWords + terms`) markeres med gult
   (multiply), og utsnittet beskjæres rundt første markering (full bredde, høyde 2:3), som `Previews.page`.
-  Krever en ny `pdf::render_page(path, page, px, words)` i `digger-core`.
+  Krever en ny `pdf::render_page(path, page, px, words)` i `showme-core`.
 - **Video:** rammen ved `loc` (`ffmpeg -ss <loc> -i f -frames:v 1 -vf scale=…`, rask søking), merket «0:06» og en
   tidslinje (`MomentBar`) med det treffende stykket opplyst. ▶ eller Space spiller i ruten med `gtk::Video` og
   `gtk::MediaFile` (GStreamer), søkt til `loc`. Mangler GStreamer-kodeken (`gst-libav`), sendes avspillingen til mpv
@@ -259,7 +259,7 @@ avspilling der det gir mening.
 ## 6. Åpne resultater på Linux
 
 Alle programmer startes med `uwsm app -- …` når `uwsm` finnes (Omarchy starter apper slik), ellers med
-`systemd-run --user --scope`. Da havner de ikke i panelets cgroup og dør ikke om `digger-panel.service` startes på nytt.
+`systemd-run --user --scope`. Da havner de ikke i panelets cgroup og dør ikke om `showme-panel.service` startes på nytt.
 Standardprogrammet finnes med `gio::AppInfo::default_for_type` (det samme som `xdg-mime query default`). Kjenner vi
 programmet, får det stedet. Ellers brukes `gio::AppInfo::launch_default_for_uri`.
 
@@ -298,27 +298,27 @@ PDF-ordene velges som i DigUps `Landmark.find`: ord fra sidens egen tekst, så v
 
 ## 7. Waybar, varsler og meny
 
-**Waybar-modul:** `digger status --waybar --follow` finnes allerede i daemonarbeidet. Den holder en `watch`-tilkobling
+**Waybar-modul:** `showme status --waybar --follow` finnes allerede i daemonarbeidet. Den holder en `watch`-tilkobling
 og skriver én linje per endring, så Waybar slipper å polle med `interval`. Panelet trenger at den gjør dette:
 høyst 2 linjer i sekundet, og tilstandene og ikonene under. Teksten er tom når ingenting skjer, og da
 skjuler Waybar modulen. Det passer Omarchys minimalistiske stil.
 
 ```jsonc
 // ~/.config/waybar/config.jsonc
-"custom/digger": {
-  "exec": "digger status --waybar --follow",
+"custom/showme": {
+  "exec": "showme status --waybar --follow",
   "return-type": "json",
   "format": "{icon} {text}",
   "format-icons": {"indexing": "󰍉", "paused": "󰏤", "downloading": "󰇚", "error": "󰀦", "idle": ""},
-  "on-click": "digger-panel --toggle",
-  "on-click-middle": "digger pause --toggle",   // ny: --toggle; i dag finnes pause og resume
-  "on-click-right": "digger menu"
+  "on-click": "showme-panel --toggle",
+  "on-click-middle": "showme pause --toggle",   // ny: --toggle; i dag finnes pause og resume
+  "on-click-right": "showme menu"
 }
 ```
 
 ```json
 {"text":"42%","alt":"indexing","class":"indexing","percentage":42,
- "tooltip":"Digger — Indexing 42% · 1 204 of 2 870\nIn Documents, Pictures, Music (not connected)\n8 waiting · 2 long files to finish"}
+ "tooltip":"ShowMe — Indexing 42% · 1 204 of 2 870\nIn Documents, Pictures, Music (not connected)\n8 waiting · 2 long files to finish"}
 ```
 
 Tilstander (`alt`/`class`): `downloading` (prosent av modellen), `indexing` (prosent), `finishing` («long files»),
@@ -326,12 +326,12 @@ Tilstander (`alt`/`class`): `downloading` (prosent av modellen), `indexing` (pro
 tooltip), `error` (daemonen er nede, mappen mangler, inotify-grensen er nådd, disken er full) og `idle` (tom tekst).
 Klassene får farge i `waybar/style.css` via temaets `@define-color`.
 
-**`digger menu`** erstatter menylinjemenyen og bruker `walker --dmenu`, slik `omarchy-menu` gjør:
+**`showme menu`** erstatter menylinjemenyen og bruker `walker --dmenu`, slik `omarchy-menu` gjør:
 Search… · Pause/Resume Indexing · Choose Folders… · Download the Model (bare når den mangler) · Settings… ·
 Restart daemon.
 
-**Varsler** (sendes av daemonen via `org.freedesktop.Notifications` med app-name `Digger`, så mako kan style dem med
-`[app-name=Digger]`). De skal være få:
+**Varsler** (sendes av daemonen via `org.freedesktop.Notifications` med app-name `ShowMe`, så mako kan style dem med
+`[app-name=ShowMe]`). De skal være få:
 - «Your folders are searchable»: første gjennomgang er ferdig (med antall og tid). Handlingen «Search» åpner
   panelet.
 - «Model ready»: nedlastingen er ferdig.
@@ -341,33 +341,33 @@ Restart daemon.
 
 ## 8. Oppsett og innstillinger
 
-**Oppsettet** er et vanlig xdg-toplevel-vindu (`digger-panel --setup`, flytende via en Hyprland-vindusregel). Det
+**Oppsettet** er et vanlig xdg-toplevel-vindu (`showme-panel --setup`, flytende via en Hyprland-vindusregel). Det
 åpnes av seg selv første gang panelet vises uten config. Stegene:
 
 1. **Velkommen og personvern.** «Get Started» sender `download` (modellen på 865 MB + pdfium), og fremdriften vises
    nederst i alle stegene etterpå («Downloading the model · 42% · about 1 min left», Try Again ved feil). Daemonen
-   startes med `systemctl --user enable --now digger` hvis den ikke kjører.
+   startes med `systemctl --user enable --now showme` hvis den ikke kjører.
 2. **Mapper.** XDG-mappene som finnes (`xdg-user-dir DOCUMENTS/PICTURES/DOWNLOAD/MUSIC/VIDEOS/DESKTOP` +
    `~/Screenshots`, hvis Omarchys skjermbildemappe er satt), hver med undermapper ett nivå ned (størst først, «Show N
    more»), avkrysning med tre tilstander fra `FolderSelection::mark`, Add Folder… (`gtk::FileDialog::select_folder`) og
    Skip a Folder…. Filtyper som skal hoppes over står i en innfelt del. **Estimater:** DigUp viser «≈ 2 min» per mappe
    og undermappe. Estimatoren er ikke portert, så første versjon viser bare antall filer per type fra en rask crawl.
-   Når `digger estimate --json` finnes, strømmes estimatene inn per mappe (`{"path":…,"seconds":…,"later":…,"files":…,
+   Når `showme estimate --json` finnes, strømmes estimatene inn per mappe (`{"path":…,"seconds":…,"later":…,"files":…,
    "kinds":{…},"subfolders":[…]}`).
 3. **Kode** (bare når det finnes repoer, dvs. `.git` under `~/Work`, `~/code`, `~/src`, `~/projects` eller `~/dev`).
    Av som standard. Viser repoene med tid og indeksstørrelse (når estimatoren finnes) og velger editor (§6).
 4. **Avhengigheter.** Sjekker ffmpeg, Tesseract og installerte språk (`tesseract --list-langs`), pdfium,
-   antiword/catdoc og Vulkan-enheten (fra `digger info`). Det som mangler, vises med en `pacman -S …`-linje som kan
+   antiword/catdoc og Vulkan-enheten (fra `showme info`). Det som mangler, vises med en `pacman -S …`-linje som kan
    kopieres. Her velges også OCR-språkene.
 5. **Snarvei og Waybar.** Viser bind-linjen og sjekker kollisjoner med `hyprctl binds -j`. Knappen *Add to
    bindings.conf* legger til linjen med kommentar og kjører `hyprctl reload`. For Waybar vises snutten med en
    kopieringsknapp, og *Add for me* lager backup først (spørsmål 5). «Try it now» registrerer at panelet ble vist via
    bindingen.
-6. **Ferdig.** «Digger lives in Waybar» og panelets taster, som DigUps sluttside.
+6. **Ferdig.** «ShowMe lives in Waybar» og panelets taster, som DigUps sluttside.
 
-**Innstillinger** (`digger-panel --settings`, samme vindu med faner):
+**Innstillinger** (`showme-panel --settings`, samme vindu med faner):
 - *General:* tastebinding (bare visning og hjelp; Wayland-apper kan ikke ta globale taster selv), start ved innlogging
-  (`systemctl --user enable digger digger-panel`), strøm («Index on battery power», «Pause in power-saver»), og hvor
+  (`systemctl --user enable showme showme-panel`), strøm («Index on battery power», «Pause in power-saver»), og hvor
   lenge encoderen får stå ledig.
 - *Folders:* fremdrift per mappe («800 of 812 indexed», «Not connected», «No access»), Pause/Resume, Add Folders…
   (samme velger som i oppsettet), Remove (med bekreftelse: «Its N files leave the index»), mapper og filtyper som
@@ -375,22 +375,22 @@ Restart daemon.
 - *Code:* av/på, kodemapper med fremdrift, editor (med egendefinert mal), «Turn Off Code Search…» som sletter
   kodeindeksen.
 - *Reading:* OCR-språk, og en status for verktøyene fra steg 4.
-- *About:* modellstatus (Google · Apache 2.0 · 865 MB, Download), indeksstørrelse og sti (`$XDG_DATA_HOME/digger`),
+- *About:* modellstatus (Google · Apache 2.0 · 865 MB, Download), indeksstørrelse og sti (`$XDG_DATA_HOME/showme`),
   personvern, lisenser og takk til DigUp.
 
 ### Config-fil
 
-`~/.config/digger/config.toml` finnes allerede i daemonarbeidet (`crates/digger/src/config.rs`). Den har flate nøkler,
-leses av daemonen ved start og på `reload`, og endres av `digger add`/`remove`. Panelet skriver samme fil med
+`~/.config/showme/config.toml` finnes allerede i daemonarbeidet (`crates/showme/src/config.rs`). Den har flate nøkler,
+leses av daemonen ved start og på `reload`, og endres av `showme add`/`remove`. Panelet skriver samme fil med
 `toml_edit` (så kommentarer blir stående) og sender `reload`. Folk i Omarchy redigerer dotfiler, så filen skal fortsatt
 kunne redigeres for hånd. Tilstand som ikke er innstillinger («onboarded», siste søk), legges i
-`$XDG_STATE_HOME/digger/state.toml`.
+`$XDG_STATE_HOME/showme/state.toml`.
 
 Forslag: behold de flate nøklene og legg til det panelet trenger. Daemonen bruker `deny_unknown_fields`, så de nye
 nøklene må deklareres i `Config`. Tabellene `[open]` og `[panel]` kan daemonen godta som uleste `toml::Table`.
 
 ```toml
-# ~/.config/digger/config.toml
+# ~/.config/showme/config.toml
 # finnes allerede
 folders = ["~/Documents", "~/Pictures", "~/Downloads"]
 skipped = ["~/Downloads/Torrents"]
@@ -403,7 +403,7 @@ encoder_idle_seconds = 600
 
 # nytt for daemonen
 pause_in_power_saver = true
-ocr_languages = ["eng", "nor"]       # $DIGGER_OCR_LANGS overstyrer
+ocr_languages = ["eng", "nor"]       # $SHOWME_OCR_LANGS overstyrer
 
 # nytt, bare for panelet
 [open]
@@ -436,7 +436,7 @@ font = ""                            # tom: samme som Walker / monospace
      `org.gnome.desktop.interface color-scheme`.
 - *Live bytte:* panelet følger med på symlenken `~/.config/omarchy/current/theme` (inotify på
   `~/.config/omarchy/current`) og laster CSS-en på nytt. Har Omarchy en `theme-set`-hook, kan den også kalle
-  `digger-panel --reload-theme`.
+  `showme-panel --reload-theme`.
 - *Form:* kantbredde og rundinger fra Hyprland (`hyprctl getoption decoration:rounding -j`, `general:border_size`), så
   panelet matcher vinduene. Uskarp bakgrunn via `layerrule`.
 - *Skrift:* samme som Walker og Waybar (Omarchy setter én monospace-skrift med `omarchy-font-set`). Den hentes fra
@@ -446,9 +446,9 @@ font = ""                            # tom: samme som Walker / monospace
 
 ## 10. Idéer utover DigUp (valgfritt, i prioritert rekkefølge)
 
-1. **`digger search --json` via daemonen + fzf.** CLI-en finnes allerede. La den bruke socketen når daemonen kjører
-   (rask, varm modell) og åpne indeksen direkte ellers. Legg ved et eksempelskript, `digger search --json "$q" | jq
-   -r '.[].path' | fzf --preview 'digger preview {}'`. Liten jobb.
+1. **`showme search --json` via daemonen + fzf.** CLI-en finnes allerede. La den bruke socketen når daemonen kjører
+   (rask, varm modell) og åpne indeksen direkte ellers. Legg ved et eksempelskript, `showme search --json "$q" | jq
+   -r '.[].path' | fzf --preview 'showme preview {}'`. Liten jobb.
 2. **Walker-provider** (Elephant-meny eller egen provider, sjekk Walker v1-APIet): f.eks. prefikset `dig ` i Walker gir
    treff fra daemonen, Enter åpner på stedet, og en egen handling sender spørringen videre til panelet. Søk der
    Omarchy-brukeren allerede er. Middels jobb.
@@ -457,10 +457,10 @@ font = ""                            # tom: samme som Walker / monospace
 4. **Søk med et bilde:** slipp et bilde eller et skjermbilde fra utklippet i panelet. Modellen er multimodal, men da må
    daemonen embedde et bilde som spørring.
 5. **Siste søk:** Ctrl+↑ i tomt felt, lagret i `state.toml`, med en innstilling for å slå det av.
-6. **Søk i kode fra Neovim:** en Telescope- eller Snacks-picker over `digger search --json "code: …"`.
+6. **Søk i kode fra Neovim:** en Telescope- eller Snacks-picker over `showme search --json "code: …"`.
 7. **Det store søkevinduet** (DigUps ⌘O: bilderutenett, filtre med antall): nyttig for bilder, men kan vente til
    etter fase 4 (spørsmål 2).
-8. **Nautilus-utvidelse** (python-nautilus): «Find Similar with Digger» på en fil.
+8. **Nautilus-utvidelse** (python-nautilus): «Find Similar with ShowMe» på en fil.
 
 Dra-og-slipp ut av resultatlista er ikke en ny idé; DigUp har det, og det er med i §6.
 
@@ -470,15 +470,15 @@ Størrelser: S ≈ ½–1 dag, M ≈ 2–4 dager, L ≈ 1 uke+.
 
 | # | Oppgave | Størrelse | Avhenger av |
 |---|---|---|---|
-| 4.0 | Protokolltilleggene i §3 avtales med den som skriver daemonen; `protocol.rs` flyttes til `digger-core::proto` | S | fase 3 |
-| 4.1 | `crates/digger-panel`: `gtk::Application`, layer-shell, `--toggle`/`--settings`/`--setup`, systemd-enhet, temalaster med live bytte | M | – |
+| 4.0 | Protokolltilleggene i §3 avtales med den som skriver daemonen; `protocol.rs` flyttes til `showme-core::proto` | S | fase 3 |
+| 4.1 | `crates/showme-panel`: `gtk::Application`, layer-shell, `--toggle`/`--settings`/`--setup`, systemd-enhet, temalaster med live bytte | M | – |
 | 4.2 | Søkeflyten: felt, to faser med generasjon og 120 ms, `ListView` med seksjoner, weaker-fold, tilstander, bunnlinje, latenslogging | M | 4.0, 4.1 |
 | 4.3 | Taster og handlinger: åpning per type (`gio::AppInfo`, mpv/evince/zathura, editorliste, `uwsm app`), FileManager1, utklipp, dra ut, høyreklikk | M | 4.2 |
 | 4.4 | Forhåndsvisning: bilde, videoramme + tidslinje, PDF-side med markering (`pdf::render_page` i core), avsnitt, kode (sourceview5), lyd/video-avspilling, miniatyrcache | L | 4.2 |
-| 4.5 | Waybar-tilstander og ikoner i `status --waybar`, `digger pause --toggle`, `digger menu` (walker --dmenu), varsler i daemonen | S | 4.0 |
+| 4.5 | Waybar-tilstander og ikoner i `status --waybar`, `showme pause --toggle`, `showme menu` (walker --dmenu), varsler i daemonen | S | 4.0 |
 | 4.6 | Innstillingsvinduet (faner, `toml_edit`, `reload`) | M | 4.0 |
 | 4.7 | Oppsettet: nedlasting med fremdrift, mappevelger med `FolderSelection`, kodesteg, avhengighetssjekk, bind/Waybar-hjelp | L | 4.6 |
-| 4.8 | Portere estimatoren (`digger estimate --json`, `Estimates.swift` + core-delen) og koble den inn i 4.7 | M | – |
+| 4.8 | Portere estimatoren (`showme estimate --json`, `Estimates.swift` + core-delen) og koble den inn i 4.7 | M | – |
 | 4.9 | Pussearbeid: tilgjengelighet (labels og roller som i DigUp), lys/mørk, flere skjermer, HiDPI, tester av protokollen og visningsmodellen (`ResultSet` og `ResultRow` som ren Rust uten GTK, testbar) | M | alt |
 
 Rekkefølge: 4.0 → 4.1 → 4.2 → 4.3 gir et panel som kan brukes daglig. Deretter 4.5 og 4.4, så 4.6–4.8. Lag

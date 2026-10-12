@@ -1,0 +1,16 @@
+# ShowMe's search panel, kept in memory so it shows in a moment. Installed by hand (until the PKGBUILD does it):
+#   cargo install --path crates/showme-panel
+#   cp packaging/showme-panel.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now showme-panel
+[Unit]
+Description=ShowMe's search panel
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.cargo/bin/showme-panel --hidden
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

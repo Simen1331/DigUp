@@ -1,0 +1,19 @@
+[package]
+name = "showme"
+description = "Search your files by what's in them, with EmbeddingGemma 2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+vulkan = ["showme-embed/vulkan"]
+cuda = ["showme-embed/cuda"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4.6", features = ["derive"] }
+showme-core = { path = "../showme-core" }
+showme-embed = { path = "../showme-embed" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+notify = "8"

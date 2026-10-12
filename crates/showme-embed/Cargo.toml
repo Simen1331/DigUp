@@ -1,0 +1,22 @@
+[package]
+name = "showme-embed"
+description = "EmbeddingGemma 2 on llama.cpp: ShowMe's embedder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+vulkan = ["llama-sys/vulkan"]
+cuda = ["llama-sys/cuda"]
+
+[dependencies]
+showme-core = { path = "../showme-core" }
+llama-sys = { path = "../llama-sys" }
+flate2 = "1"
+sha2 = "0.11"
+tar = "0.4"
+ureq = { version = "3", features = ["platform-verifier"] }
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -1,10 +1,10 @@
-// Digger in Waybar: add "custom/digger" to a modules list in ~/.config/waybar/config.jsonc, and this block beside the
+// ShowMe in Waybar: add "custom/showme" to a modules list in ~/.config/waybar/config.jsonc, and this block beside the
 // other modules. It shows how far indexing has got while it runs, and hides when all is well.
-"custom/digger": {
-  "exec": "digger status --waybar --follow",
+"custom/showme": {
+  "exec": "showme status --waybar --follow",
   "return-type": "json",
   "restart-interval": 5,
-  "on-click": "digger-panel --toggle",
-  "on-click-middle": "digger pause --toggle",
+  "on-click": "showme-panel --toggle",
+  "on-click-middle": "showme pause --toggle",
   "tooltip": true
 }

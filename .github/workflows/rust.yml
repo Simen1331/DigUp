@@ -1,4 +1,4 @@
-# Builds and tests Digger, the Rust port, on Linux: with the CPU backend, and with Vulkan (built, not run: the runners
+# Builds and tests ShowMe, the Rust port, on Linux: with the CPU backend, and with Vulkan (built, not run: the runners
 # have no GPU).
 name: Rust
 
@@ -36,8 +36,8 @@ jobs:
           sudo ninja -C /tmp/gtk4-layer-shell/build install
           curl -sSLo pdfium.tgz https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7881/pdfium-linux-x64.tgz
           echo "1470e21b8b4a3b4ad7f85684e2da11d94f3b69a86d81dee11b9b6709d927ac1d  pdfium.tgz" | sha256sum -c
-          mkdir -p ~/.local/share/digger/lib
-          tar xzf pdfium.tgz -C ~/.local/share/digger/lib --strip-components=1 lib/libpdfium.so
+          mkdir -p ~/.local/share/showme/lib
+          tar xzf pdfium.tgz -C ~/.local/share/showme/lib --strip-components=1 lib/libpdfium.so
       - name: Vulkan headers and shader compiler
         if: matrix.features == 'vulkan'
         run: sudo apt-get install -y -q libvulkan-dev glslc spirv-headers
@@ -51,4 +51,4 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --release --features "${{ matrix.features }}" -- -D warnings
       - run: cargo test --release --features "${{ matrix.features }}"
-      - run: cargo run --release --bin digger --features "${{ matrix.features }}" -- info
+      - run: cargo run --release --bin showme --features "${{ matrix.features }}" -- info

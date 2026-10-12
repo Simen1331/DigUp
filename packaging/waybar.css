@@ -1,7 +1,7 @@
-/* Digger in Waybar: add to ~/.config/waybar/style.css. The classes are the daemon's states. */
-#custom-digger { margin: 0 7.5px; }
-#custom-digger.indexing, #custom-digger.syncing, #custom-digger.finishing { opacity: 1; }
-#custom-digger.idle { opacity: 0.6; }
-#custom-digger.paused, #custom-digger.waiting { opacity: 0.4; }
-#custom-digger.error { color: #e06c75; }
-#custom-digger.offline { opacity: 0; }
+/* ShowMe in Waybar: add to ~/.config/waybar/style.css. The classes are the daemon's states. */
+#custom-showme { margin: 0 7.5px; }
+#custom-showme.indexing, #custom-showme.syncing, #custom-showme.finishing { opacity: 1; }
+#custom-showme.idle { opacity: 0.6; }
+#custom-showme.paused, #custom-showme.waiting { opacity: 0.4; }
+#custom-showme.error { color: #e06c75; }
+#custom-showme.offline { opacity: 0; }

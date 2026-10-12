@@ -1,7 +1,7 @@
-# Digger: the Linux (Rust) port of DigUp. The Swift package next to it stays until the port catches up.
+# ShowMe: the Linux (Rust) port of DigUp. The Swift package next to it stays until the port catches up.
 [workspace]
 resolver = "3"
-members = ["crates/llama-sys", "crates/digger-core", "crates/digger-embed", "crates/digger", "crates/digger-panel"]
+members = ["crates/llama-sys", "crates/showme-core", "crates/showme-embed", "crates/showme", "crates/showme-panel"]
 
 [workspace.package]
 version = "0.1.0"

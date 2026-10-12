@@ -493,72 +493,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "digger"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "digger-core",
- "digger-embed",
- "notify",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "digger-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "half",
- "image",
- "kamadak-exif",
- "libheif-rs",
- "pdfium-render",
- "quick-xml",
- "regex",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "toml",
- "unicode-general-category",
- "unicode-normalization",
- "unicode-segmentation",
- "zip",
-]
-
-[[package]]
-name = "digger-embed"
-version = "0.1.0"
-dependencies = [
- "digger-core",
- "flate2",
- "llama-sys",
- "serde",
- "serde_json",
- "sha2",
- "tar",
- "ureq",
-]
-
-[[package]]
-name = "digger-panel"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-channel",
- "chrono",
- "digger-core",
- "gtk4",
- "gtk4-layer-shell",
- "image",
- "serde_json",
- "sourceview5",
-]
-
-[[package]]
 name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2110,6 +2044,72 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "showme"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "notify",
+ "serde",
+ "serde_json",
+ "showme-core",
+ "showme-embed",
+]
+
+[[package]]
+name = "showme-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "half",
+ "image",
+ "kamadak-exif",
+ "libheif-rs",
+ "pdfium-render",
+ "quick-xml",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "unicode-general-category",
+ "unicode-normalization",
+ "unicode-segmentation",
+ "zip",
+]
+
+[[package]]
+name = "showme-embed"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "llama-sys",
+ "serde",
+ "serde_json",
+ "sha2",
+ "showme-core",
+ "tar",
+ "ureq",
+]
+
+[[package]]
+name = "showme-panel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "chrono",
+ "gtk4",
+ "gtk4-layer-shell",
+ "image",
+ "serde_json",
+ "showme-core",
+ "sourceview5",
+]
 
 [[package]]
 name = "simd-adler32"
