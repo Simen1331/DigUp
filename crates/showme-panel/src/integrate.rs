@@ -1,5 +1,5 @@
-//! Fitting ShowMe into the desktop, for setup: the background services, a key in Hyprland, the Waybar module, and the
-//! programs ShowMe reads with. Every file it changes is copied aside first (`name.showme-backup-…`), and it only ever
+//! Fitting ShowMe into the desktop, for setup: the background services, a key in Hyprland, ShowMe in the bar (Omarchy's
+//! own, or Waybar), and the programs ShowMe reads with. Every file it changes is copied aside first (`name.showme-backup-…`), and it only ever
 //! adds lines.
 
 use std::path::{Path, PathBuf};
@@ -12,6 +12,8 @@ use crate::open::have;
 const DAEMON_UNIT: &str = include_str!("../../../packaging/showme.service");
 const PANEL_UNIT: &str = include_str!("../../../packaging/showme-panel.service");
 const WAYBAR_STYLE: &str = include_str!("../../../packaging/waybar.css");
+const OMARCHY_MANIFEST: &str = include_str!("../../../packaging/omarchy/showme/manifest.json");
+const OMARCHY_WIDGET: &str = include_str!("../../../packaging/omarchy/showme/BarWidget.qml");
 
 /// What runs the panel's key.
 const TOGGLE: &str = "showme-panel --toggle";
@@ -218,6 +220,40 @@ fn hyprland_errors() -> Option<String> {
     (!errors.is_empty()).then_some(errors)
 }
 
+// Omarchy's bar (Omarchy 4: the Omarchy shell, with widgets as plugins).
+
+/// Whether the bar is Omarchy's own, which takes widgets as plugins.
+pub fn omarchy_bar() -> bool {
+    have("omarchy-plugin-enable")
+}
+
+/// Whether the bar shows ShowMe's widget already.
+pub fn in_omarchy_bar() -> bool {
+    let Ok(text) = std::fs::read_to_string(config("omarchy/shell.json")) else { return false };
+    serde_json::from_str::<serde_json::Value>(&text).is_ok_and(|shell| in_bar_layout(&shell))
+}
+
+fn in_bar_layout(shell: &serde_json::Value) -> bool {
+    let Some(layout) = shell["bar"]["layout"].as_object() else { return false };
+    layout.values().filter_map(|section| section.as_array()).flatten().any(|module| module["id"] == "showme")
+}
+
+/// Puts the widget in Omarchy's plugin folder and has Omarchy place it at the right of the bar. Returns the backup of
+/// the bar's settings.
+pub fn add_to_omarchy_bar() -> Result<Vec<PathBuf>> {
+    let shell = config("omarchy/shell.json");
+    let copies = if shell.exists() { vec![backup(&shell)?] } else { Vec::new() };
+    let folder = config("omarchy/plugins/showme");
+    std::fs::create_dir_all(&folder)?;
+    std::fs::write(folder.join("manifest.json"), OMARCHY_MANIFEST)?;
+    std::fs::write(folder.join("BarWidget.qml"), OMARCHY_WIDGET)?;
+    run("omarchy-shell", &["shell", "rescanPlugins"]);
+    if !run("omarchy-plugin-enable", &["showme", "--section", "right"]) {
+        bail!("Omarchy couldn't add the widget; try: omarchy plugin enable showme");
+    }
+    Ok(copies)
+}
+
 // Waybar.
 
 /// The module, as it goes in Waybar's config.
@@ -361,6 +397,15 @@ mod tests {
         assert_eq!(bound_key_in(&lines).as_deref(), Some("SUPER ALT, D"));
         let text = "-- o.bind(\"SUPER + X\", \"ShowMe\", \"showme-panel --toggle\")\no.bind(\"SUPER + CTRL + D\", \"ShowMe\", \"showme-panel --toggle\")\n";
         assert_eq!(bound_key_in(text).as_deref(), Some("SUPER CTRL, D"));
+    }
+
+    #[test]
+    fn the_widget_is_found_in_any_section_of_the_bar() {
+        let shell =
+            serde_json::json!({"bar": {"layout": {"left": [{"id": "omarchy.menu"}], "right": [{"id": "showme"}]}}});
+        assert!(in_bar_layout(&shell));
+        let shell = serde_json::json!({"bar": {"layout": {"right": [{"id": "omarchy.audio"}]}}, "showme": true});
+        assert!(!in_bar_layout(&shell));
     }
 
     #[test]

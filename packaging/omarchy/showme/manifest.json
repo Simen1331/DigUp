@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "showme",
+  "name": "ShowMe",
+  "version": "0.1.0",
+  "author": "ShowMe",
+  "description": "How far ShowMe has got reading your files. Hidden when all is read; click to search, middle-click to pause.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "ShowMe",
+    "description": "Indexing progress while ShowMe reads files. Click to search, middle-click to pause.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

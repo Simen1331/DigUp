@@ -1,5 +1,5 @@
 //! Setup (`showme-panel --setup`, and by itself the first time): the model, the folders, code, the programs ShowMe
-//! reads with, a key and Waybar. Each step can be skipped, and Settings changes all of it later.
+//! reads with, a key and the bar (Omarchy's, or Waybar). Each step can be skipped, and Settings changes all of it later.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -139,7 +139,7 @@ fn programs_page() -> gtk::Box {
     page
 }
 
-/// The key that shows the panel, and ShowMe in Waybar. "Add for me" copies the file aside and adds the lines.
+/// The key that shows the panel, and ShowMe in the bar (Omarchy's, or Waybar). "Add for me" copies the file aside and adds the lines.
 fn desktop_page() -> gtk::Box {
     let page = page();
     page.append(&heading("A key for ShowMe"));
@@ -197,6 +197,46 @@ fn desktop_page() -> gtk::Box {
     let shown = key.clone();
     copy_key.connect_clicked(move |_| copy(&integrate::bind_line(&shown.text())));
 
+    if integrate::omarchy_bar() {
+        omarchy_bar_section(&page);
+    } else {
+        waybar_section(&page);
+    }
+    page
+}
+
+/// ShowMe's widget in Omarchy's own bar (Omarchy 4).
+fn omarchy_bar_section(page: &gtk::Box) {
+    page.append(&heading("ShowMe in the bar"));
+    page.append(&note(
+        "While ShowMe reads files, the bar shows how far it has got; when all is read it hides. Click it to search, middle-click to pause. It goes in ~/.config/omarchy/plugins/showme, at the right of the bar.",
+    ));
+    let add = gtk::Button::with_label("Add for me");
+    add.set_halign(gtk::Align::Start);
+    page.append(&add);
+    let said = note("");
+    page.append(&said);
+    if integrate::in_omarchy_bar() {
+        said.set_text("✓ ShowMe is in the bar already.");
+        add.set_sensitive(false);
+    }
+    add.connect_clicked(move |button| match integrate::add_to_omarchy_bar() {
+        Ok(copies) => {
+            let names: Vec<String> = copies.iter().map(|path| showme_core::settings::shorten(path)).collect();
+            let kept = if names.is_empty() {
+                String::new()
+            } else {
+                format!(" The bar's settings as they were: {}", names.join(", "))
+            };
+            said.set_text(&format!("✓ Added to the bar.{kept}"));
+            button.set_sensitive(false);
+        }
+        Err(error) => said.set_text(&format!("{error:#}")),
+    });
+}
+
+/// ShowMe's module in Waybar.
+fn waybar_section(page: &gtk::Box) {
     page.append(&heading("ShowMe in Waybar"));
     page.append(&note(
         "While ShowMe reads files, Waybar shows how far it has got; when all is read it hides. Click it to search, middle-click to pause.",
@@ -225,7 +265,6 @@ fn desktop_page() -> gtk::Box {
         Err(error) => said.set_text(&format!("{error:#}")),
     });
     copy_module.connect_clicked(|_| copy(integrate::WAYBAR_MODULE));
-    page
 }
 
 fn done_page() -> gtk::Box {

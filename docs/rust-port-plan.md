@@ -110,6 +110,7 @@ Fase 0–3 kan bygges og testes i skyen, i denne Linux-containeren. GUI-en og Vu
   - `showme-panel --window`: stort søkevindu med rutenett og filtre.
   - `showme-panel --settings`: mapper (med «delvis valgt» for undermapper og estimert tid), lesing og OCR-språk, kode og editor, åpning og utseende, strøm og minne, status med pause og synk. Lagrer mens du endrer og ber daemonen lese på nytt.
   - `showme-panel --setup` (åpnes av seg selv første gang): starter tjenestene, laster ned modellen med fremdrift, velger mapper og kodemapper, sjekker programmer (med `pacman`-linje å kopiere), og legger til tast i Hyprland og modul i Waybar med «Add for me» (tar sikkerhetskopi først) eller kopier selv.
+  - **Omarchy 4** (Hyprland 0.55+ med Lua, Omarchy shell i stedet for Waybar og Walker): panelet tar fargene fra `~/.local/state/omarchy/current/theme/colors.toml`; «Add for me» skriver tast, blur og vindusregel til `bindings.lua` (sjekket med `hyprctl configerrors`, ellers legges filen tilbake), og legger ShowMe-widgeten (`packaging/omarchy/showme/`) i Omarchy-baren med `omarchy plugin enable`.
   - Waybar-modulen er skjult når alt er lest, viser fremdrift ellers; klikk søker, midtklikk pauser. Varsler med `notify-send` når en stor runde er ferdig, modellen er klar eller noe feiler.
   - `showme estimate [--code] [--json] [mapper]`: hvor lang tid første runde tar. Kostnadene er målt på RTX 3060 (Vulkan) med Ryzen 7 3700X; skjermbilder er tregest, fordi Tesseract leser dem i full størrelse.
 
