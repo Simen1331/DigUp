@@ -65,6 +65,24 @@ struct Control {
     blocker: Option<String>,
 }
 
+/// Where a pause is kept, so it lasts through a restart: "step" after a step, "you" when asked for.
+fn pause_file() -> PathBuf {
+    showme_core::paths::data_folder().join("paused")
+}
+
+fn remember_pause(paused: bool, step: bool) {
+    let file = pause_file();
+    let _ = if paused { std::fs::write(&file, if step { "step" } else { "you" }) } else { std::fs::remove_file(&file) };
+}
+
+/// A pause from before the last stop (the computer was turned off while paused).
+fn remembered_pause() -> Control {
+    match std::fs::read_to_string(pause_file()) {
+        Ok(reason) => Control { paused: true, step_done: reason.trim() == "step", ..Default::default() },
+        Err(_) => Control::default(),
+    }
+}
+
 impl Shared {
     fn control(&self) -> MutexGuard<'_, Control> {
         self.control.lock().unwrap()
@@ -119,7 +137,7 @@ pub fn run() -> Result<()> {
         }),
         status_version: Mutex::new(0),
         status_changed: Condvar::new(),
-        control: Mutex::new(Control { sync: true, code_sync: true, ..Default::default() }),
+        control: Mutex::new(Control { sync: true, code_sync: true, ..remembered_pause() }),
         wake: Condvar::new(),
         config: Mutex::new(config),
         generation: AtomicU64::new(0),
@@ -558,6 +576,7 @@ fn step_over(shared: &Shared, mut control: MutexGuard<'_, Control>) -> bool {
     control.step_done = true;
     control.step_started = None;
     drop(control);
+    remember_pause(true, true);
     let status = shared.status.lock().unwrap().clone();
     let share = (100 * (status.files - status.pending)).checked_div(status.files).unwrap_or(100);
     notify(
@@ -1113,6 +1132,7 @@ fn serve(stream: UnixStream, shared: &Arc<Shared>) {
                     control.paused = true;
                     control.step_done = false;
                 });
+                remember_pause(true, false);
                 shared.update(|status| {
                     status.state = "paused".into();
                     status.detail = None;
@@ -1125,6 +1145,7 @@ fn serve(stream: UnixStream, shared: &Arc<Shared>) {
                     control.step_done = false;
                     control.step_started = None;
                 });
+                remember_pause(false, false);
                 Response::ok()
             }
             Request::Sync => {
