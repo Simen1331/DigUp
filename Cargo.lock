@@ -2106,6 +2106,7 @@ dependencies = [
  "gtk4",
  "gtk4-layer-shell",
  "image",
+ "libc",
  "serde_json",
  "showme-core",
  "sourceview5",

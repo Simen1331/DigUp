@@ -5,8 +5,10 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Condvar, LazyLock, Mutex};
 
-use gtk::{gdk, gio, glib};
+use gtk::{gdk, glib};
 use image::{DynamicImage, RgbaImage};
 use showme_core::model::FileKind;
 use showme_core::{images, pdf};
@@ -89,9 +91,53 @@ thread_local! {
     static CACHE: RefCell<HashMap<Key, Option<gdk::Texture>>> = RefCell::new(HashMap::new());
 }
 
-/// Forgets the pictures (the panel was hidden).
+/// Forgets the pictures (the panel was hidden), and drops the ones still waiting to be made.
 pub fn clear() {
     CACHE.with(|cache| cache.borrow_mut().clear());
+    GENERATION.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Pictures are made by a few threads, newest first. A picture is made from the whole file (a 4K screenshot or a
+/// 12 MP photo is 30–200 MB while it's decoded), so GLib's pool, which runs dozens at once, took the panel past 10 GB
+/// as results came in.
+const WORKERS: usize = 3;
+
+struct Job {
+    key: Key,
+    generation: u64,
+    reply: async_channel::Sender<Option<RgbaImage>>,
+}
+
+/// Bumped by `clear`: jobs from before it are dropped.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+
+static QUEUE: LazyLock<(Mutex<Vec<Job>>, Condvar)> = LazyLock::new(|| {
+    for number in 0..WORKERS {
+        std::thread::Builder::new().name(format!("pictures-{number}")).spawn(work).expect("can't start a thread");
+    }
+    (Mutex::new(Vec::new()), Condvar::new())
+});
+
+fn work() {
+    let (jobs, ready) = &*QUEUE;
+    loop {
+        let job = {
+            let mut waiting = jobs.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            loop {
+                match waiting.pop() {
+                    Some(job) => break job,
+                    None => waiting = ready.wait(waiting).unwrap_or_else(|poisoned| poisoned.into_inner()),
+                }
+            }
+        };
+        if job.generation == GENERATION.load(Ordering::Relaxed) {
+            let _ = job.reply.send_blocking(draw(&job.key));
+        }
+        if jobs.lock().is_ok_and(|waiting| waiting.is_empty()) {
+            // SAFETY: malloc_trim only hands free memory back to the system.
+            unsafe { libc::malloc_trim(0) };
+        }
+    }
 }
 
 /// Calls `done` with the picture (None: there's none to make) on the main loop: at once when it's made already.
@@ -102,9 +148,14 @@ pub fn load(key: Key, done: impl FnOnce(Option<gdk::Texture>) + 'static) {
     if let Some(known) = CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
         return done(known);
     }
+    let (reply, picture) = async_channel::bounded(1);
+    let (jobs, ready) = &*QUEUE;
+    let job = Job { key: key.clone(), generation: GENERATION.load(Ordering::Relaxed), reply };
+    jobs.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(job);
+    ready.notify_one();
     glib::spawn_future_local(async move {
-        let job = key.clone();
-        let picture = gio::spawn_blocking(move || draw(&job)).await.ok().flatten();
+        // A dropped job (the panel hid) leaves nothing to show.
+        let Ok(picture) = picture.recv().await else { return };
         let texture = picture.as_ref().map(texture);
         CACHE.with(|cache| cache.borrow_mut().insert(key, texture.clone()));
         done(texture);
