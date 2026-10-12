@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "showme.search",
+  "name": "ShowMe search",
+  "version": "0.1.0",
+  "author": "ShowMe",
+  "description": "A search field in the bar: what you type finds your files by what's in them, in a list under it",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "ShowMe search",
+    "description": "Search your files from the bar",
+    "category": "Tools",
+    "allowMultiple": false,
+    "defaultSection": "center"
+  }
+}

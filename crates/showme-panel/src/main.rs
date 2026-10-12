@@ -29,10 +29,23 @@ use gtk::{gio, glib};
 /// The panel, and the theme that keeps it styled.
 type Started = (Rc<panel::Panel>, theme::Theme);
 
+/// A hit as `showme search --json` prints it, as a row to open. That form leaves out what opening doesn't need.
+fn hit_from_json(text: &str, query: &str) -> Result<results::ResultRow, serde_json::Error> {
+    let mut value: serde_json::Value = serde_json::from_str(text)?;
+    if let Some(fields) = value.as_object_mut() {
+        for (name, default) in [("strong", serde_json::json!(true)), ("modified", 0.into()), ("size", 0.into())] {
+            fields.entry(name).or_insert(default);
+        }
+    }
+    let hit: showme_core::proto::Hit = serde_json::from_value(value)?;
+    let terms: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    Ok(results::ResultRow::new(&hit, &terms))
+}
+
 fn main() -> glib::ExitCode {
     if std::env::args().any(|argument| argument == "--help" || argument == "-h") {
         println!(
-            "showme-panel: ShowMe's search panel\n  --toggle   show or hide it\n  --window   the big search window\n  --settings the settings\n  --setup    set ShowMe up\n  --hidden   start without showing it"
+            "showme-panel: ShowMe's search panel\n  --toggle   show or hide it\n  --window   the big search window\n  --settings the settings\n  --setup    set ShowMe up\n  --hidden   start without showing it\n  --open HIT [QUERY]  open a hit from `showme search --json` where it matched (the bar's search)\n  --window [QUERY]    the big search window, searching for QUERY"
         );
         return glib::ExitCode::SUCCESS;
     }
@@ -75,7 +88,18 @@ fn main() -> glib::ExitCode {
         }
         match arguments.first().map(String::as_str) {
             Some("--toggle") => panel.toggle(),
-            Some("--window") => window::open(app, ""),
+            Some("--window") => window::open(app, arguments.get(1).map_or("", String::as_str)),
+            Some("--open") => {
+                let query = arguments.get(2).map_or("", String::as_str);
+                match arguments.get(1).map(|hit| hit_from_json(hit, query)) {
+                    Some(Ok(row)) => open::open(&row, &showme_core::settings::Config::load().unwrap_or_default().open),
+                    Some(Err(error)) => {
+                        eprintln!("showme-panel --open: {error}");
+                        return glib::ExitCode::FAILURE;
+                    }
+                    None => return glib::ExitCode::FAILURE,
+                }
+            }
             Some("--settings") => settings::open(app),
             Some("--setup") => setup::open(app),
             Some("--hidden") => {}
