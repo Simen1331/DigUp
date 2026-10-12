@@ -25,9 +25,65 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property string query: field.text.trim()
 
-  implicitWidth: pill.implicitWidth
+  // Where the center section starts (x in the bar's window): the widest it has been, and to begin with room for
+  // the indicators it reveals on hover, so the pill doesn't move when they show. -1: not measured yet.
+  property real centerEdge: -1
+  property real measuredLeft: 0
+
+  // The space from the workspaces to the center section, with the pill in its middle.
+  implicitWidth: Math.max(pill.implicitWidth + Style.space(16), centerEdge - measuredLeft - Style.space(8))
   // The bar's full height, so the pill sits in its middle.
   implicitHeight: Style.bar.sizeHorizontal
+
+
+  // The center section's slots in this bar (the bar API only shows a plugin its own widgets, so they're found in the
+  // window's item tree; only where they are is read).
+  property var centerSlots: []
+  property string measuredLayout: ""
+
+  function findCenterSlots(item, found) {
+    if (!item) return found
+    if (item.region === "center" && item.moduleName !== undefined && item.activeItem !== undefined) found.push(item)
+    var children = item.children || []
+    for (var i = 0; i < children.length; i++) findCenterSlots(children[i], found)
+    return found
+  }
+
+  function measure() {
+    var window = root.QsWindow.window
+    if (!window || !window.contentItem) return
+    if (centerSlots.length === 0) centerSlots = findCenterSlots(window.contentItem, [])
+    var edge = Infinity
+    for (var i = 0; i < centerSlots.length; i++) {
+      var slot = centerSlots[i]
+      if (!slot.visible || slot.width <= 0) continue
+      edge = Math.min(edge, slot.mapToItem(null, 0, 0).x)
+    }
+    measuredLeft = root.mapToItem(null, 0, 0).x
+    if (edge === Infinity) return
+    centerEdge = centerEdge < 0 ? edge - Style.space(110) : Math.min(centerEdge, edge)
+  }
+
+  Timer {
+    interval: 1000
+    running: true
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: root.measure()
+  }
+
+  Connections {
+    target: root.bar
+    ignoreUnknownSignals: true
+    // The bar hands the layout over again whenever a panel opens: only a changed one is measured anew.
+    function onLayoutConfigChanged() {
+      var layout = JSON.stringify(root.bar.layoutConfig || {})
+      if (layout === root.measuredLayout) return
+      root.measuredLayout = layout
+      root.centerEdge = -1
+      root.centerSlots = []
+    }
+  }
 
   onOpenedChanged: {
     if (opened) {
@@ -132,6 +188,7 @@ Panel {
   Rectangle {
     id: pill
     anchors.verticalCenter: parent.verticalCenter
+    anchors.horizontalCenter: parent.horizontalCenter
     implicitWidth: Style.space(220)
     implicitHeight: Style.space(18)
     radius: Style.cornerRadius
