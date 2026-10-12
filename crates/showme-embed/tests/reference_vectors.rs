@@ -1,5 +1,5 @@
-//! The vectors this build makes for fixed inputs, against the ones `VECTOR_VERSION` stands for: DigUp's
-//! tests/reference/vectors.json, made by llama.cpp on a Mac's GPU. Indexes record that version, so
+//! The vectors this build makes for fixed inputs, against the ones `VECTOR_VERSION` stands for:
+//! tests/reference/vectors.json, which DigUp made with llama.cpp on a Mac's GPU. Indexes record that version, so
 //! every llama.cpp update, and every backend (CPU, Vulkan, CUDA), must pass this. Needs the model files; skipped
 //! without them (`showme download`).
 

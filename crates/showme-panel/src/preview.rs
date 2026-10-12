@@ -1,4 +1,4 @@
-//! The preview beside the results (it stands in for Quick Look): the picture, the page with your words marked, the
+//! The preview beside the results: the picture, the page with your words marked, the
 //! video or recording at its moment (and playing from there), the passage or the code that matched. Under it the name,
 //! the folder, the details and why it matched, with Open and Show in Files.
 
