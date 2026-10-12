@@ -22,9 +22,12 @@ pub struct Preview {
     excerpt: gtk::Label,
     open_button: gtk::Button,
     show_button: gtk::Button,
+    play_button: gtk::Button,
     /// The row shown now, and the stream playing (stopped when the row changes).
     row: std::cell::RefCell<Option<ResultRow>>,
     stream: std::cell::RefCell<Option<gtk::MediaFile>>,
+    /// Where a video or recording plays once asked to: its still (or icon) until then.
+    stage: std::cell::RefCell<Option<gtk::Box>>,
 }
 
 fn label(class: &str) -> gtk::Label {
@@ -83,8 +86,11 @@ impl Preview {
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let open_button = gtk::Button::with_label("Open");
         let show_button = gtk::Button::with_label("Show in Files");
+        let play_button = gtk::Button::with_label("Play");
+        play_button.set_tooltip_text(Some("Space"));
         buttons.append(&open_button);
         buttons.append(&show_button);
+        buttons.append(&play_button);
         for child in [media.upcast_ref::<gtk::Widget>(), title.upcast_ref(), folder.upcast_ref(), details.upcast_ref()]
         {
             widget.append(child);
@@ -102,9 +108,19 @@ impl Preview {
             excerpt,
             open_button,
             show_button,
+            play_button,
             row: Default::default(),
             stream: Default::default(),
+            stage: Default::default(),
         });
+        {
+            let weak = std::rc::Rc::downgrade(&preview);
+            preview.play_button.connect_clicked(move |_| {
+                if let Some(preview) = weak.upgrade() {
+                    preview.toggle_play();
+                }
+            });
+        }
         {
             let weak = std::rc::Rc::downgrade(&preview);
             let settings = settings.clone();
@@ -128,20 +144,56 @@ impl Preview {
 
     /// Stops what's playing (the row changed, or the panel hid).
     pub fn stop(&self) {
+        self.stage.borrow_mut().take();
         if let Some(stream) = self.stream.borrow_mut().take() {
             stream.pause();
             stream.clear();
         }
+        self.play_button.set_label("Play");
     }
 
     /// Plays the video or recording from its moment, or pauses it (Space).
+    ///
+    /// The player is made only now, not for each row the arrows pass: GStreamer 1.28's decodebin3 aborts the whole
+    /// panel (`mq_slot_handle_stream_start: assertion failed: (collection)`) when players come and go that fast.
     pub fn toggle_play(&self) -> bool {
-        let Some(stream) = self.stream.borrow().clone() else { return false };
-        if stream.is_playing() {
-            stream.pause()
-        } else {
-            stream.play()
+        if let Some(stream) = self.stream.borrow().clone() {
+            if stream.is_playing() {
+                stream.pause();
+                self.play_button.set_label("Play");
+            } else {
+                stream.play();
+                self.play_button.set_label("Pause");
+            }
+            return true;
         }
+        let row = self.row.borrow().clone();
+        let Some(row) = row.filter(|row| matches!(row.kind, FileKind::Video | FileKind::Audio)) else { return false };
+        let Some(stage) = self.stage.borrow().clone() else { return false };
+        let file = gtk::MediaFile::for_file(&gio::File::for_path(&row.path));
+        let at = row.loc.unwrap_or(0.0);
+        // Seek once the stream knows its length, then play from there.
+        file.connect_prepared_notify(move |file| {
+            if file.is_prepared() {
+                if at > 0.5 {
+                    file.seek((at * 1_000_000.0) as i64);
+                }
+                file.play();
+            }
+        });
+        if row.kind == FileKind::Video {
+            while let Some(child) = stage.first_child() {
+                stage.remove(&child);
+            }
+            let video = gtk::Video::builder().autoplay(false).vexpand(true).build();
+            video.set_height_request(300);
+            video.set_media_stream(Some(&file));
+            stage.append(&video);
+        } else {
+            stage.append(&gtk::MediaControls::new(Some(&file)));
+        }
+        self.play_button.set_label("Pause");
+        *self.stream.borrow_mut() = Some(file);
         true
     }
 
@@ -173,6 +225,7 @@ impl Preview {
             _ => self.excerpt.set_visible(false),
         }
         self.open_button.set_label(&open::open_title(row, settings));
+        self.play_button.set_visible(matches!(row.kind, FileKind::Video | FileKind::Audio));
 
         match row.kind {
             FileKind::Image | FileKind::Screenshot | FileKind::Pdf => self.show_picture(row),
@@ -195,21 +248,20 @@ impl Preview {
         });
     }
 
-    /// The video at its moment, ready to play from there. GStreamer plays it inside the panel.
+    /// The video's frame at its moment; Space (or Play) plays it from there inside the panel.
     fn show_video(&self, row: &ResultRow) {
-        let file = gtk::MediaFile::for_file(&gio::File::for_path(&row.path));
-        file.set_muted(false);
-        let video = gtk::Video::builder().autoplay(false).vexpand(true).build();
-        video.set_height_request(300);
-        video.set_media_stream(Some(&file));
-        let at = row.loc.unwrap_or(0.0);
-        // Seek once the stream knows its length; it shows the frame there until played.
-        file.connect_prepared_notify(move |file| {
-            if file.is_prepared() && at > 0.5 {
-                file.seek((at * 1_000_000.0) as i64);
+        let stage = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        stage.set_vexpand(true);
+        let picture =
+            gtk::Picture::builder().content_fit(gtk::ContentFit::Contain).can_shrink(true).vexpand(true).build();
+        picture.set_height_request(300);
+        stage.append(&picture);
+        pictures::load(Key::new(row, 900, false), move |texture| {
+            if let Some(texture) = texture {
+                picture.set_paintable(Some(&texture));
             }
         });
-        self.media.append(&video);
+        self.media.append(&stage);
         let moment = gtk::Label::new(Some(&match (row.place(), row.duration()) {
             (Some(place), Some(duration)) => format!("{place} of {}", clock(duration)),
             (Some(place), None) => place,
@@ -217,23 +269,18 @@ impl Preview {
         }));
         moment.add_css_class("showme-sub");
         self.media.append(&moment);
-        *self.stream.borrow_mut() = Some(file);
+        *self.stage.borrow_mut() = Some(stage);
     }
 
+    /// An icon and the matching span; Space (or Play) plays the recording from there, with its controls.
     fn show_audio(&self, row: &ResultRow) {
+        let stage = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        stage.set_vexpand(true);
         let icon = gtk::Image::from_icon_name("audio-x-generic-symbolic");
         icon.set_pixel_size(96);
         icon.set_vexpand(true);
-        self.media.append(&icon);
-        let file = gtk::MediaFile::for_file(&gio::File::for_path(&row.path));
-        let at = row.loc.unwrap_or(0.0);
-        file.connect_prepared_notify(move |file| {
-            if file.is_prepared() && at > 0.5 {
-                file.seek((at * 1_000_000.0) as i64);
-            }
-        });
-        let controls = gtk::MediaControls::new(Some(&file));
-        self.media.append(&controls);
+        stage.append(&icon);
+        self.media.append(&stage);
         let span = match (row.loc, row.loc_end, row.duration()) {
             (Some(start), Some(end), Some(duration)) => {
                 format!("{} – {} of {}", clock(start), clock(end), clock(duration))
@@ -244,7 +291,7 @@ impl Preview {
         let moment = gtk::Label::new(Some(&span));
         moment.add_css_class("showme-sub");
         self.media.append(&moment);
-        *self.stream.borrow_mut() = Some(file);
+        *self.stage.borrow_mut() = Some(stage);
     }
 
     /// Code and passages need their text from the daemon (`set_text` fills them in); until then, the excerpt.
