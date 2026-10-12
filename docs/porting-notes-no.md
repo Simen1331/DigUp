@@ -1,5 +1,7 @@
 # Plan: ShowMe – DigUp i Rust for Omarchy Linux
 
+> Arbeidsnotater fra porteringen fra Mac til Linux, på norsk og beholdt som historikk. Hvordan ShowMe installeres og brukes, står i README.
+
 Den nye appen heter **ShowMe** (kommando `showme`). Den bygger på DigUp av ARahim3 (MIT), og det står i README og lisensnotisene.
 
 ## Hva prosjektet er i dag
@@ -105,7 +107,7 @@ Fase 0–3 kan bygges og testes i skyen, i denne Linux-containeren. GUI-en og Vu
   - .doc leses med `antiword` eller `catdoc` hvis en av dem er installert.
 - **Fase 3: ferdig, testet i skyen.** `showme daemon` indekserer mappene i `~/.config/showme/config.toml` og svarer på søk over `$XDG_RUNTIME_DIR/showme.sock` (JSON-linjer, se `crates/showme-core/src/proto.rs`). Nye filer indekseres sekunder etter at de lagres (inotify), koden etter 60 s ro. Den store gjennomgangen venter i power-saver-modus og på batteri hvis du har slått det av. Modellen slippes etter 60 s uten arbeid, søkemodellen etter 10 min uten søk. Mapper som forsvinner (en USB-disk), beholder filene sine i indeksen. Kommandoer: `showme add/remove <mappe> [--code]`, `pause`, `resume`, `reload`, `status --waybar [--follow]`. `showme search` går via daemonen når den kjører (64 ms med varm modell). Filer i `packaging/`: systemd-enhet og Waybar-modul.
 - **Testet på RTX 3060 (2026-10-12):** `showme info` finner kortet som Vulkan-enhet, og referansevektorene holder på GPU (cosinus 0,99998–1,00000). Første oppstart tar ca. 27 s ekstra mens NVIDIA-driveren kompilerer og lagrer Vulkan-shaderne. Videoer dekodes bare på nøkkelrammer (ca. 4 ganger raskere enn alle rammer, og raskere enn NVDEC), med full dekoding når nøkkelrammene ligger for langt fra hverandre.
-- **Fase 4: ferdig i skyen, venter på test på desktop.** Plan og idéer: `docs/frontend-plan.md`.
+- **Fase 4: ferdig, testet på desktop (Omarchy 4).**
   - `showme-panel`: GTK4-panel med layer-shell over vinduene (som Walker), i Omarchy-temaets farger (følger temabytte). Ordtreff mens du skriver, meningssøk når du stopper; resultater gruppert etter type; forhåndsvisning med bilde, PDF-side med ordene markert, video og lyd som spilles av fra treffet, og kode med linjenumre. Taster: ↑↓/Ctrl+J/K, Enter åpner der det traff, Space spiller, Ctrl+C kopierer filen, Ctrl+O det store vinduet, Alt+1–7 filtrerer, Ctrl+, innstillinger.
   - `showme-panel --window`: stort søkevindu med rutenett og filtre.
   - `showme-panel --settings`: mapper (med «delvis valgt» for undermapper og estimert tid), lesing og OCR-språk, kode og editor, åpning og utseende, strøm og minne, status med pause og synk. Lagrer mens du endrer og ber daemonen lese på nytt.

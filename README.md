@@ -119,7 +119,7 @@ cargo fmt --check && cargo clippy --features showme/vulkan -- -D warnings && car
 ```
 
 `evals/` holds the queries ranking changes are measured with (`showme eval`), against a folder of test files DigUp's
-testbed made; a Linux testbed isn't in the repo yet. `docs/rust-port-plan.md` follows the port
+testbed made; a Linux testbed isn't in the repo yet. `docs/porting-notes-no.md` follows the port
 from the Mac app, in Norwegian.
 
 ## Thanks
