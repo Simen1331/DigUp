@@ -28,6 +28,16 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+enum CollectionChange {
+    /// Lists the collections and their folders.
+    List,
+    /// Makes a collection, or adds folders to one.
+    Add { name: String, folders: Vec<PathBuf> },
+    /// Takes folders out of a collection; with none, the whole collection goes.
+    Remove { name: String, folders: Vec<PathBuf> },
+}
+
+#[derive(Subcommand)]
 enum Command {
     /// What llama.cpp was built with and the devices (GPUs) it can use.
     Info,
@@ -55,7 +65,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Searches the index. "code: <words>" searches the code index.
+    /// Searches the index. "code: <words>" searches the code index, "<collection>: <words>" a collection's folders.
     Search {
         words: Vec<String>,
         #[command(flatten)]
@@ -94,6 +104,11 @@ enum Command {
         folders: Vec<PathBuf>,
         #[arg(long)]
         code: bool,
+    },
+    /// Collections: folders searched alone by name ("business: pricing power").
+    Collection {
+        #[command(subcommand)]
+        change: Option<CollectionChange>,
     },
     /// Pauses the big first pass (new files are still indexed).
     Pause {
@@ -236,6 +251,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Daemon => daemon::run(),
         Command::Add { folders, code } => change_folders(&folders, code, true),
         Command::Remove { folders, code } => change_folders(&folders, code, false),
+        Command::Collection { change } => collection(change.unwrap_or(CollectionChange::List)),
         Command::Pause { toggle } => {
             let paused = toggle
                 && Client::connect()
@@ -569,6 +585,14 @@ fn search(query: &str, args: &IndexArgs, tuning: &Tuning, kinds: &[FileKind], n:
         );
         return print_hits(&hits, json, &footer);
     }
+    // "business: pricing": the business collection's folders alone.
+    let settings = if code.is_none() { config::Config::load().ok() } else { None };
+    let named = settings.as_ref().and_then(|settings| settings.collection_query(&query));
+    let folders = named.map(|(collection, _)| collection.roots()).unwrap_or_default();
+    let query = named.map(|(_, rest)| rest.to_string()).unwrap_or(query);
+    if query.is_empty() {
+        bail!("search the collection for what?");
+    }
     let store = IndexArgs { code: code.is_some(), ..args.clone() }.store()?;
     let mut searcher = Searcher::new(&store, true)?;
     let started = Instant::now();
@@ -577,6 +601,7 @@ fn search(query: &str, args: &IndexArgs, tuning: &Tuning, kinds: &[FileKind], n:
     let encoded = Instant::now();
     let options = SearchOptions {
         kinds: if kinds.is_empty() { None } else { Some(kinds.iter().copied().collect()) },
+        folders,
         limit: n,
         z_gate: tuning.zgate,
         word_weight: tuning.word_weight,
@@ -714,6 +739,71 @@ fn change_folders(folders: &[PathBuf], code: bool, add: bool) -> Result<()> {
     Ok(())
 }
 
+fn collection(change: CollectionChange) -> Result<()> {
+    let mut settings = config::Config::load()?;
+    let short = |folder: &PathBuf| config::shorten(&config::expand(&folder.to_string_lossy()));
+    match change {
+        CollectionChange::List => {
+            if settings.collections.is_empty() {
+                println!("no collections yet; make one with: showme collection add business ~/Books/Business");
+            }
+            for collection in &settings.collections {
+                println!("{}:", collection.name);
+                for folder in &collection.folders {
+                    println!("  {folder}");
+                }
+            }
+            return Ok(());
+        }
+        CollectionChange::Add { name, folders } => {
+            if !config::collection_name_ok(&name) {
+                bail!("a collection's name is one word (letters, digits, - and _), and not \"code\"");
+            }
+            if folders.is_empty() {
+                bail!("which folders?");
+            }
+            for folder in &folders {
+                let folder = config::expand(&folder.to_string_lossy());
+                if !folder.is_dir() {
+                    bail!("not a folder: {}", folder.display());
+                }
+            }
+            let index =
+                match settings.collections.iter().position(|collection| collection.name.eq_ignore_ascii_case(&name)) {
+                    Some(index) => index,
+                    None => {
+                        settings.collections.push(config::Collection { name, folders: Vec::new() });
+                        settings.collections.len() - 1
+                    }
+                };
+            let collection = &mut settings.collections[index];
+            for folder in folders.iter().map(short) {
+                if !collection.folders.contains(&folder) {
+                    collection.folders.push(folder);
+                }
+            }
+        }
+        CollectionChange::Remove { name, folders } => {
+            let Some(index) =
+                settings.collections.iter().position(|collection| collection.name.eq_ignore_ascii_case(&name))
+            else {
+                bail!("no collection called {name}");
+            };
+            if folders.is_empty() {
+                settings.collections.remove(index);
+            } else {
+                let gone: Vec<String> = folders.iter().map(short).collect();
+                settings.collections[index].folders.retain(|folder| !gone.contains(folder));
+            }
+        }
+    }
+    settings.save()?;
+    if let Some(mut client) = Client::connect() {
+        client.command(&Request::Reload)?;
+    }
+    collection(CollectionChange::List)
+}
+
 /// Waybar's custom module: `{"text", "tooltip", "class", "percentage"}`, once or (`follow`) each time it changes.
 fn waybar(args: &IndexArgs, follow: bool) -> Result<()> {
     let _ = args;
@@ -841,6 +931,7 @@ fn evaluate(file: &Path, args: &IndexArgs, tuning: &Tuning, depth: usize) -> Res
         let searcher = &mut searchers.iter_mut().find(|(code, _)| *code == is_code[index]).unwrap().1;
         let options = SearchOptions {
             kinds: query.kind.as_ref().and_then(|kind| kind.parse().ok()).map(|kind| HashSet::from([kind])),
+            folders: Vec::new(),
             limit: depth,
             z_gate: tuning.zgate,
             word_weight: tuning.word_weight,

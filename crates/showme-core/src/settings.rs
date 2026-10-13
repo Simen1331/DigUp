@@ -7,6 +7,10 @@
 //! code_folders = ["~/code"]
 //! excluded_extensions = ["iso"]
 //! index_on_battery = true
+//!
+//! [[collections]]
+//! name = "business"
+//! folders = ["~/Books/Business", "~/Books/Leadership"]
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -50,10 +54,35 @@ pub struct Config {
     pub pause_in_power_saver: bool,
     /// The languages Tesseract reads screenshots in ("eng", "nor"); empty: the installed ones ShowMe knows.
     pub ocr_languages: Vec<String>,
+    /// Named sets of folders to search alone: "business: negotiating under pressure".
+    pub collections: Vec<Collection>,
     /// How results open.
     pub open: OpenSettings,
     /// How the panel looks.
     pub panel: PanelSettings,
+}
+
+/// Folders searched alone by name: a search starting "business:" looks only in the business collection's folders
+/// (and what's inside them). They are found in the main index; nothing is read again for them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Collection {
+    pub name: String,
+    pub folders: Vec<String>,
+}
+
+impl Collection {
+    /// Its folders as full paths.
+    pub fn roots(&self) -> Vec<String> {
+        self.folders.iter().map(|folder| expand(folder).to_string_lossy().into_owned()).collect()
+    }
+}
+
+/// A name a collection can have: a word or two people type before a colon ("business", "psych-notes"), not "code".
+pub fn collection_name_ok(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        && !name.eq_ignore_ascii_case(crate::model::code_query::PREFIX.trim_end_matches(':'))
 }
 
 /// The programs results open in: "auto" finds one; otherwise a command with {file}, {line}, {page}, {seconds} and
@@ -106,6 +135,7 @@ impl Default for Config {
             index: String::new(),
             pause_in_power_saver: true,
             ocr_languages: Vec::new(),
+            collections: Vec::new(),
             open: OpenSettings::default(),
             panel: PanelSettings::default(),
         }
@@ -189,6 +219,16 @@ impl Config {
         FolderSelection::new(&folders, &skipped, &[])
     }
 
+    /// The collection a search names ("Business: pricing" → business, "pricing"), and what's searched for in it.
+    pub fn collection_query<'q>(&self, query: &'q str) -> Option<(&Collection, &'q str)> {
+        let (head, rest) = query.trim_start().split_once(':')?;
+        let collection = self
+            .collections
+            .iter()
+            .find(|collection| !collection.name.is_empty() && collection.name.eq_ignore_ascii_case(head.trim_end()))?;
+        Some((collection, rest.trim()))
+    }
+
     /// The main index's folders (without those another one already searches whole), and its options.
     pub fn main(&self) -> (Vec<PathBuf>, IndexOptions) {
         let selection = Self::selection(&self.folders, &self.skipped);
@@ -234,6 +274,20 @@ mod tests {
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
         assert_eq!(back, config);
         assert!(toml::from_str::<Config>("folder = []").is_err()); // a typo is an error, not silence
+    }
+
+    #[test]
+    fn a_search_can_name_a_collection() {
+        let text = "folders = [\"/b\"]\n\n[[collections]]\nname = \"business\"\nfolders = [\"/b/Business\"]\n";
+        let config: Config = toml::from_str(text).unwrap();
+        let (collection, rest) = config.collection_query("  Business: pricing power").unwrap();
+        assert_eq!((collection.name.as_str(), rest), ("business", "pricing power"));
+        assert_eq!(collection.roots(), ["/b/Business"]);
+        assert!(config.collection_query("psychology: habits").is_none());
+        assert!(config.collection_query("business plan").is_none());
+        let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
+        assert_eq!(back, config);
+        assert!(collection_name_ok("psych-notes") && !collection_name_ok("code") && !collection_name_ok("two words"));
     }
 
     #[test]

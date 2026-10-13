@@ -257,6 +257,9 @@ pub struct Response {
     /// The search went to the code index.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<bool>,
+    /// The collection the search named ("business: …"): only its folders were searched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection: Option<String>,
     /// The query's words, for marking them in previews.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terms: Option<Vec<String>>,

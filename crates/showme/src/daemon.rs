@@ -434,6 +434,11 @@ fn index_with(shared: &Arc<Shared>, config: &Config) -> Result<Stop> {
     }
 }
 
+/// The settings indexing goes by: all but the collections, which only searches use.
+fn reading(config: &Config) -> Config {
+    Config { collections: Vec::new(), ..config.clone() }
+}
+
 /// Reads and clears a request flag.
 fn take(shared: &Shared, flag: impl FnOnce(&mut Control) -> &mut bool) -> bool {
     std::mem::take(flag(&mut shared.control()))
@@ -793,7 +798,7 @@ fn watch_loop(shared: &Arc<Shared>) {
                 });
             }
             // New settings: watch the new folders.
-            if *shared.config.lock().unwrap() != generation {
+            if reading(&shared.config.lock().unwrap()) != reading(&generation) {
                 break;
             }
             if shared.control().stop {
@@ -1009,11 +1014,26 @@ fn search(
     };
     let code_text = code_query::text(query);
     let is_code = code_text.is_some();
-    let text = code_text.unwrap_or_else(|| query.to_string());
+    // "business: pricing": the business collection's folders alone, in the main index.
+    let collection = if is_code {
+        None
+    } else {
+        let config = shared.config.lock().unwrap();
+        config.collection_query(query).map(|(collection, rest)| (collection.name.clone(), collection.roots(), rest))
+    };
+    let text = match (&code_text, &collection) {
+        (Some(code), _) => code.clone(),
+        (None, Some((_, _, rest))) => rest.to_string(),
+        (None, None) => query.to_string(),
+    };
+    let (collection, folders) = match collection {
+        Some((name, roots, _)) => (Some(name), roots),
+        None => (None, Vec::new()),
+    };
     let terms = showme_core::searcher::terms(&text);
     if text.trim().is_empty() {
         let empty = Response { hits: Some(Vec::new()), meaning: Some(false), terms: Some(terms), ..Response::ok() };
-        return Response { code: Some(is_code), ..empty };
+        return Response { code: Some(is_code), collection, ..empty };
     }
     let folder = shared.config.lock().unwrap().index_folder();
     state.last_used = Some(Instant::now());
@@ -1040,7 +1060,7 @@ fn search(
         Ok(searcher) => searcher,
         Err(response) => return response,
     };
-    let options = SearchOptions { kinds, limit, prefix_last, ..Default::default() };
+    let options = SearchOptions { kinds, folders, limit, prefix_last, ..Default::default() };
     match searcher.search(&text, vector.as_deref(), &options) {
         Ok(hits) => {
             let strong = strong_count(&hits, 0.5);
@@ -1050,6 +1070,7 @@ fn search(
                 ms: Some((started.elapsed().as_secs_f64() * 10000.0).round() / 10.0),
                 meaning: Some(meaning),
                 code: Some(is_code),
+                collection,
                 terms: Some(terms),
                 ..Response::ok()
             }
@@ -1166,8 +1187,12 @@ fn serve(stream: UnixStream, shared: &Arc<Shared>) {
             }
             Request::Reload => match Config::load() {
                 Ok(config) => {
+                    // Collections only change what a search looks at: the indexing goes on as it was.
+                    let reread = reading(&shared.config.lock().unwrap()) != reading(&config);
                     *shared.config.lock().unwrap() = config;
-                    shared.request(|control| control.reload = true);
+                    if reread {
+                        shared.request(|control| control.reload = true);
+                    }
                     Response::ok()
                 }
                 Err(error) => Response::error(format!("{error:#}")),

@@ -4,7 +4,7 @@
 //! that describe them. At this scale (~20k vectors, ~30 MB) brute-force search over an in-memory copy takes a few
 //! milliseconds; no vector database needed. The schema is DigUp's (version 5), so the two can read each other's.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -404,6 +404,19 @@ impl IndexStore {
                 })
             })
             .collect()
+    }
+
+    /// The files under any of `roots` (a collection's folders).
+    pub fn files_in(&self, roots: &[String]) -> Result<HashSet<i64>> {
+        let mut statement = self.db.prepare("SELECT id FROM files WHERE path >= ? AND path < ?")?;
+        let mut files = HashSet::new();
+        for root in roots {
+            let ids = statement.query_map(params_from_iter(prefix_range(root)), |row| row.get::<_, i64>(0))?;
+            for id in ids {
+                files.insert(id?);
+            }
+        }
+        Ok(files)
     }
 
     /// For each root: its long files still being read, and how many of their pages and chunks are left.

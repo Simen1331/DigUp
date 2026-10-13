@@ -8,6 +8,7 @@
 //!   showme-panel --setup    setup (it opens by itself the first time)
 
 mod client;
+mod collections;
 mod folders;
 mod integrate;
 mod open;

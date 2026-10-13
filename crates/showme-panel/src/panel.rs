@@ -411,6 +411,9 @@ impl Panel {
             None => self.preview.show(None, &self.config.borrow().open),
         }
         let mut footer = summary(strong, weaker);
+        if let Some((collection, _)) = self.config.borrow().collection_query(&query) {
+            footer += &format!("  ·  in {}", collection.name);
+        }
         if !meaning && strong + weaker > 0 {
             footer += "  ·  words only so far";
         }
@@ -422,6 +425,8 @@ impl Panel {
     fn update_message(&self) {
         let query = self.entry.text().to_string();
         let status = self.status.borrow();
+        let config = self.config.borrow();
+        let collection = config.collection_query(&query);
         let text = if query.trim().is_empty() {
             String::new()
         } else if status.is_none() {
@@ -431,10 +436,19 @@ impl Panel {
                 .into()
         } else if code_query::text(&query).is_some() && !status.as_ref().is_some_and(|status| status.has_code) {
             "Code search is off.\nAdd code folders with: showme add --code ~/code".into()
+        } else if let Some((collection, "")) = collection {
+            let folders = collection.folders.join("\n");
+            format!("Search {} alone, by what's in it:\n\n{folders}", collection.name)
         } else if status.as_ref().is_some_and(|status| status.files == 0) {
             "No folders chosen yet.\nAdd some with: showme add ~/Documents ~/Pictures".into()
         } else if self.results.borrow().is_empty() && self.shown_full.get() {
-            "No good matches.\nTry other words, or describe what's in it.".into()
+            match collection {
+                Some((collection, _)) => format!(
+                    "No good matches in {}.\nTry other words, or search everything without \"{}:\".",
+                    collection.name, collection.name
+                ),
+                None => "No good matches.\nTry other words, or describe what's in it.".into(),
+            }
         } else {
             String::new()
         };

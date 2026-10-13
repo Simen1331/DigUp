@@ -45,6 +45,8 @@ pub struct SearchHit {
 #[derive(Debug, Clone)]
 pub struct SearchOptions {
     pub kinds: Option<HashSet<FileKind>>,
+    /// Only files under these folders (a collection's); empty: all.
+    pub folders: Vec<String>,
     pub limit: usize,
     pub z_gate: f64,
     /// None: the index's own (`WORD_WEIGHT`, or `CODE_WORD_WEIGHT` for code).
@@ -55,7 +57,14 @@ pub struct SearchOptions {
 
 impl Default for SearchOptions {
     fn default() -> Self {
-        SearchOptions { kinds: None, limit: 20, z_gate: 2.0, word_weight: None, prefix_last: false }
+        SearchOptions {
+            kinds: None,
+            folders: Vec::new(),
+            limit: 20,
+            z_gate: 2.0,
+            word_weight: None,
+            prefix_last: false,
+        }
     }
 }
 
@@ -176,8 +185,10 @@ impl<'a> Searcher<'a> {
         if query_vector.is_some() && !self.vectors_loaded {
             self.reload()?;
         }
+        let within = if options.folders.is_empty() { None } else { Some(self.store.files_in(&options.folders)?) };
         let allowed = |file: i64, kinds: &HashMap<i64, FileKind>| {
             options.kinds.as_ref().is_none_or(|wanted| kinds.get(&file).is_some_and(|kind| wanted.contains(kind)))
+                && within.as_ref().is_none_or(|files| files.contains(&file))
         };
 
         // Meaning: score every vector on this query's scale (`meaning`), keep each file's best segment.
@@ -211,11 +222,18 @@ impl<'a> Searcher<'a> {
         let mut coverage: HashMap<i64, f64> = HashMap::new(); // share of the query's words found in the file
         if !patterns.is_empty() {
             let mut seen = HashSet::new();
-            let mut statement = self.store.db.prepare(
+            // Within a collection, its own files only: the best matches elsewhere mustn't crowd them out.
+            let only = match &within {
+                Some(files) => {
+                    format!(" AND s.file IN ({})", files.iter().map(i64::to_string).collect::<Vec<_>>().join(","))
+                }
+                None => String::new(),
+            };
+            let mut statement = self.store.db.prepare(&format!(
                 "SELECT s.file, s.id, snippet(fts, 1, '«', '»', '…', 12), fts.original FROM fts
                 JOIN segments s ON s.id = fts.rowid
-                WHERE fts MATCH ? ORDER BY bm25(fts, 3.0, 1.0) LIMIT 1000",
-            )?;
+                WHERE fts MATCH ?{only} ORDER BY bm25(fts, 3.0, 1.0) LIMIT 1000"
+            ))?;
             let mut rows = statement.query([patterns.join(" OR ")])?;
             while let Some(row) = rows.next()? {
                 let file: i64 = row.get(0)?;
@@ -716,6 +734,26 @@ mod tests {
         assert!(bengali[0].excerpt.as_deref().unwrap().contains("«কুমিরও»"), "{:?}", bengali[0].excerpt);
         assert_eq!(searcher.search("المكتبة", None, &options).unwrap().len(), 1);
         assert!(searcher.search("কলকাতা", None, &options).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_collection_searches_its_folders_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = IndexStore::open_main(dir.path()).unwrap();
+        for (inode, path) in [(1, "/books/Business/pricing.txt"), (2, "/books/Psychology/pricing.txt")] {
+            let candidate = Candidate { path: path.into(), kind: FileKind::Doc, size: 1, mtime: 1.0, inode, device: 1 };
+            let id = store.insert(&candidate).unwrap();
+            let text = Some("pricing power and anchoring");
+            store.add_segment(id, SegmentKind::Chunk, Modality::Text, Some(1.0), None, None, text, None).unwrap();
+        }
+        let mut searcher = Searcher::new(&store, false).unwrap();
+        let everywhere = searcher.search("pricing", None, &SearchOptions::default()).unwrap();
+        assert_eq!(everywhere.len(), 2);
+        let business = SearchOptions { folders: vec!["/books/Business".into()], ..Default::default() };
+        let found = searcher.search("pricing", None, &business).unwrap();
+        assert_eq!(found.iter().map(|hit| hit.path.as_str()).collect::<Vec<_>>(), ["/books/Business/pricing.txt"]);
+        let nowhere = SearchOptions { folders: vec!["/books/History".into()], ..Default::default() };
+        assert!(searcher.search("pricing", None, &nowhere).unwrap().is_empty());
     }
 
     #[test]

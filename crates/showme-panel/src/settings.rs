@@ -700,6 +700,7 @@ pub fn open(app: &gtk::Application) {
     stack.add_titled(&scrolled(&folders), Some("folders"), "Folders");
     stack.add_titled(&scrolled(&reading_page(&editing)), Some("reading"), "Reading");
     stack.add_titled(&scrolled(&code_page(&editing)), Some("code"), "Code");
+    stack.add_titled(&scrolled(&crate::collections::collections_page(&editing)), Some("collections"), "Collections");
     stack.add_titled(&scrolled(&opening_page(&editing)), Some("opening"), "Opening & Looks");
     stack.add_titled(&scrolled(&power_page(&editing)), Some("power"), "Power");
     stack.add_titled(&scrolled(&status.page), Some("status"), "Status");
