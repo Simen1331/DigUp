@@ -78,7 +78,12 @@ Press `SUPER + D`, or click the search field in the Omarchy bar, and describe wh
 
 In the panel: `↑` `↓` move, `Enter` opens the file where it matched (the page, the moment), `Ctrl+Enter` shows it in
 Files, `Space` previews (and plays a video or recording from its moment), `Ctrl+C` copies it, `Ctrl+O` opens the big
-window, `Alt+1`–`7` filter by kind, `Ctrl+,` opens Settings.
+window, `Ctrl+,` opens Settings. The kinds under the field narrow the search to them: check some, or press `Alt+1`–`6`
+(`Alt+0` unchecks them all).
+
+Or type them before what you look for: `pdf: lease contract`, `video: dog in the snow`, `screenshots: error`. A
+collection, some of your folders under a name made in Settings, works the same way, and the two go together:
+`business: pdf: negotiating`. Start with `code:` to search code.
 
 The bar's field drops the hits under it as you type: `Enter` opens one, `Shift+Enter` shows them all in the big window,
 and the gear opens Settings. The status widget shows how far the first pass has come; middle-click pauses it.

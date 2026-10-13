@@ -23,6 +23,17 @@ use crate::results::{Group, ResultRow, ResultSet};
 
 const WIDTH: i32 = 1120;
 const HEIGHT: i32 = 620;
+/// The field and the kinds under it, the panel's height with no results.
+const FIELD: i32 = 100;
+/// The kinds that can be checked under the field, Alt+1 to Alt+6 (Alt+0 unchecks them all).
+const KINDS: [(FileKind, &str); 6] = [
+    (FileKind::Screenshot, "Screenshots"),
+    (FileKind::Image, "Images"),
+    (FileKind::Pdf, "PDFs"),
+    (FileKind::Doc, "Documents"),
+    (FileKind::Video, "Video"),
+    (FileKind::Audio, "Audio"),
+];
 /// How long typing must pause before the full results replace the word matches.
 const SETTLE: Duration = Duration::from_millis(120);
 
@@ -38,7 +49,8 @@ pub struct Panel {
     pub window: gtk::ApplicationWindow,
     entry: gtk::Entry,
     badge: gtk::Label,
-    filters: Vec<(Option<Group>, gtk::ToggleButton)>,
+    /// The kinds under the field: none checked searches them all.
+    kinds: Vec<(FileKind, gtk::CheckButton)>,
     list: gtk::ListBox,
     body: gtk::Box,
     message: gtk::Label,
@@ -51,7 +63,6 @@ pub struct Panel {
     /// Whether the full results (meaning too) of the current keystroke are shown, or only its word matches.
     shown_full: Cell<bool>,
     unfolded: Cell<bool>,
-    filter: Cell<Option<Group>>,
     seq: Cell<u64>,
     typed_at: Cell<Instant>,
     /// The user moved the selection: Space previews instead of typing a space.
@@ -68,7 +79,7 @@ impl Panel {
         window.add_css_class("showme");
         // Broadway (GTK in a browser, for screenshots) doesn't grow a window once it's shown: start it full size there.
         let full = std::env::var_os("SHOWME_PANEL_FULL").is_some();
-        window.set_default_size(WIDTH, if full { HEIGHT } else { 64 });
+        window.set_default_size(WIDTH, if full { HEIGHT } else { FIELD });
         place(&window);
 
         let frame = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -85,24 +96,18 @@ impl Panel {
         header.append(&badge);
         frame.append(&header);
 
-        let filter_row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        filter_row.set_margin_start(12);
-        let mut filters = Vec::new();
-        let all = gtk::ToggleButton::with_label("All");
-        all.set_active(true);
-        all.add_css_class("showme-filter");
-        filter_row.append(&all);
-        filters.push((None, all.clone()));
-        for group in Group::ALL {
-            let button = gtk::ToggleButton::with_label(group.title());
-            button.set_group(Some(&all));
-            button.add_css_class("showme-filter");
-            filter_row.append(&button);
-            filters.push((Some(group), button));
+        let kind_row = gtk::Box::new(gtk::Orientation::Horizontal, 14);
+        kind_row.add_css_class("showme-kinds");
+        let mut kinds = Vec::new();
+        for (number, (kind, title)) in KINDS.into_iter().enumerate() {
+            let check = gtk::CheckButton::with_label(title);
+            check.set_tooltip_text(Some(&format!("Alt+{}, or start with {}:", number + 1, kind.as_str())));
+            kind_row.append(&check);
+            kinds.push((kind, check));
         }
+        frame.append(&kind_row);
 
         let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        body.append(&filter_row);
         body.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         let columns = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         columns.set_vexpand(true);
@@ -130,7 +135,7 @@ impl Panel {
         body.append(&footer);
         body.set_visible(false);
         // The panel's size comes from what it holds: a field alone, or the field over the results.
-        body.set_size_request(-1, HEIGHT - 64);
+        body.set_size_request(-1, HEIGHT - FIELD);
         frame.set_size_request(WIDTH, -1);
         frame.append(&body);
         window.set_child(Some(&frame));
@@ -141,7 +146,7 @@ impl Panel {
             window,
             entry,
             badge,
-            filters,
+            kinds,
             list,
             body,
             message,
@@ -153,7 +158,6 @@ impl Panel {
             results: RefCell::new(ResultSet::default()),
             shown_full: Cell::new(false),
             unfolded: Cell::new(false),
-            filter: Cell::new(None),
             seq: Cell::new(0),
             typed_at: Cell::new(Instant::now()),
             arrowed: Cell::new(false),
@@ -179,14 +183,10 @@ impl Panel {
                 panel.search();
             }
         });
-        for (group, button) in &self.filters {
+        for (_, check) in &self.kinds {
             let weak = Rc::downgrade(self);
-            let group = *group;
-            button.connect_toggled(move |button| {
-                if button.is_active()
-                    && let Some(panel) = weak.upgrade()
-                {
-                    panel.filter.set(group);
+            check.connect_toggled(move |_| {
+                if let Some(panel) = weak.upgrade() {
                     panel.search();
                 }
             });
@@ -267,7 +267,7 @@ impl Panel {
             self.show(ResultSet::default(), false);
             return;
         }
-        let kinds = self.filter.get().map(|group| group.kinds()).unwrap_or_default();
+        let kinds = self.checked().iter().map(|kind| kind.as_str().to_string()).collect::<Vec<_>>();
         let request = |words_only: bool| Request::Search {
             query: text.clone(),
             limit: 60,
@@ -278,6 +278,25 @@ impl Panel {
         };
         self.daemon.send(Line::Words, request(true));
         self.daemon.send(Line::Full, request(false));
+    }
+
+    /// The kinds checked under the field.
+    fn checked(&self) -> Vec<FileKind> {
+        self.kinds.iter().filter(|(_, check)| check.is_active()).map(|(kind, _)| *kind).collect()
+    }
+
+    /// What the search is narrowed to, "PDFs in business", from what's typed before it or else what's checked.
+    fn narrowed(&self, query: &str) -> Option<String> {
+        let config = self.config.borrow();
+        let scope = config.scope(query);
+        let kinds =
+            if scope.kinds.is_empty() { FileKind::titles(&self.checked()) } else { FileKind::titles(&scope.kinds) };
+        match (kinds, scope.collection) {
+            (Some(kinds), Some(collection)) => Some(format!("{kinds} in {}", collection.name)),
+            (Some(kinds), None) => Some(kinds),
+            (None, Some(collection)) => Some(collection.name.clone()),
+            (None, None) => None,
+        }
     }
 
     fn handle(self: &Rc<Self>, event: Event) {
@@ -411,8 +430,8 @@ impl Panel {
             None => self.preview.show(None, &self.config.borrow().open),
         }
         let mut footer = summary(strong, weaker);
-        if let Some((collection, _)) = self.config.borrow().collection_query(&query) {
-            footer += &format!("  ·  in {}", collection.name);
+        if let Some(narrowed) = self.narrowed(&query) {
+            footer += &format!("  ·  {narrowed} only");
         }
         if !meaning && strong + weaker > 0 {
             footer += "  ·  words only so far";
@@ -426,7 +445,8 @@ impl Panel {
         let query = self.entry.text().to_string();
         let status = self.status.borrow();
         let config = self.config.borrow();
-        let collection = config.collection_query(&query);
+        let scope = config.scope(&query);
+        let narrowed = self.narrowed(&query);
         let text = if query.trim().is_empty() {
             String::new()
         } else if status.is_none() {
@@ -436,17 +456,19 @@ impl Panel {
                 .into()
         } else if code_query::text(&query).is_some() && !status.as_ref().is_some_and(|status| status.has_code) {
             "Code search is off.\nAdd code folders with: showme add --code ~/code".into()
-        } else if let Some((collection, "")) = collection {
-            let folders = collection.folders.join("\n");
-            format!("Search {} alone, by what's in it:\n\n{folders}", collection.name)
+        } else if scope.rest.is_empty() {
+            let narrowed = narrowed.unwrap_or_default();
+            match scope.collection {
+                Some(collection) => {
+                    format!("Search {narrowed} alone, by what's in it:\n\n{}", collection.folders.join("\n"))
+                }
+                None => format!("Search {narrowed} alone, by what's in them."),
+            }
         } else if status.as_ref().is_some_and(|status| status.files == 0) {
             "No folders chosen yet.\nAdd some with: showme add ~/Documents ~/Pictures".into()
         } else if self.results.borrow().is_empty() && self.shown_full.get() {
-            match collection {
-                Some((collection, _)) => format!(
-                    "No good matches in {}.\nTry other words, or search everything without \"{}:\".",
-                    collection.name, collection.name
-                ),
+            match narrowed {
+                Some(narrowed) => format!("No good matches ({narrowed} only).\nTry other words, or search everything."),
                 None => "No good matches.\nTry other words, or describe what's in it.".into(),
             }
         } else {
@@ -617,13 +639,18 @@ impl Panel {
                 true
             }
             _ if alt => {
-                let number = key.to_unicode().and_then(|c| c.to_digit(10));
-                match number.filter(|number| (1..=7).contains(number)) {
-                    Some(number) => {
-                        self.filters[number as usize - 1].1.set_active(true);
+                let number = key.to_unicode().and_then(|c| c.to_digit(10)).map(|number| number as usize);
+                match number {
+                    Some(0) => {
+                        self.kinds.iter().for_each(|(_, check)| check.set_active(false));
                         true
                     }
-                    None => false,
+                    Some(number) if number <= self.kinds.len() => {
+                        let check = &self.kinds[number - 1].1;
+                        check.set_active(!check.is_active());
+                        true
+                    }
+                    _ => false,
                 }
             }
             _ => false,

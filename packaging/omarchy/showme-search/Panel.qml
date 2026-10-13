@@ -6,7 +6,8 @@ import qs.Ui
 
 // ShowMe's search in the bar: a field-like pill that opens a search field with the hits under it as you type.
 // The bar itself takes no keys, so the field lives in a KeyboardPanel dropped from the pill. Enter opens the hit
-// where it matched (the page, the moment), Shift+Enter shows all of them in ShowMe's window, Esc closes.
+// where it matched (the page, the moment), Shift+Enter shows all of them in ShowMe's window, Esc closes. The kinds
+// under the field narrow the search to them (Alt+1 to Alt+6, Alt+0 unchecks them all), as "pdf:" typed first does.
 Panel {
   id: root
   moduleName: "showme.search"
@@ -17,6 +18,18 @@ Panel {
   property int selectedIndex: 0
   // The query the running search is for, and whether one is running.
   property string searchedQuery: ""
+  property string searchedKinds: ""
+  // The kinds that can be checked under the field; none checked searches them all.
+  readonly property var kindChoices: [
+    { kind: "screenshot", title: "Screenshots" },
+    { kind: "image", title: "Images" },
+    { kind: "pdf", title: "PDFs" },
+    { kind: "doc", title: "Documents" },
+    { kind: "video", title: "Video" },
+    { kind: "audio", title: "Audio" }
+  ]
+  property var checkedKinds: []
+  readonly property string kinds: checkedKinds.join(",")
   property bool searching: false
   property string problem: ""
 
@@ -92,6 +105,15 @@ Panel {
     }
   }
 
+  function toggleKind(kind) {
+    var checked = checkedKinds.slice()
+    var at = checked.indexOf(kind)
+    if (at >= 0) checked.splice(at, 1)
+    else checked.push(kind)
+    checkedKinds = checked
+    search()
+  }
+
   function search() {
     if (query === "") {
       hits = []
@@ -101,7 +123,10 @@ Panel {
     if (searching) return
     searching = true
     searchedQuery = query
-    searchProcess.command = ["bash", "-lc", 'exec showme search --json -n 8 -- "$1"', "showme", query]
+    searchedKinds = kinds
+    searchProcess.command = ["bash", "-lc",
+      'kinds=(); [ -n "$2" ] && kinds=(--kind "$2"); exec showme search --json -n 8 "${kinds[@]}" -- "$1"',
+      "showme", query, kinds]
     searchProcess.running = true
   }
 
@@ -116,7 +141,7 @@ Panel {
     }
     selectedIndex = 0
     // The field changed while it searched: search again for what it says now.
-    if (query !== searchedQuery) search()
+    if (query !== searchedQuery || kinds !== searchedKinds) search()
   }
 
   function openHit(index) {
@@ -273,6 +298,15 @@ Panel {
             } else if (event.key === Qt.Key_Up) {
               if (root.selectedIndex > 0) root.selectedIndex--
               event.accepted = true
+            } else if ((event.modifiers & Qt.AltModifier) && event.key >= Qt.Key_0 && event.key <= Qt.Key_6) {
+              var number = event.key - Qt.Key_0
+              if (number === 0) {
+                root.checkedKinds = []
+                root.search()
+              } else {
+                root.toggleKind(root.kindChoices[number - 1].kind)
+              }
+              event.accepted = true
             } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
               if (event.modifiers & Qt.ShiftModifier) root.openWindow()
               else root.openHit(root.selectedIndex)
@@ -303,6 +337,47 @@ Panel {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: root.openSettings()
+          }
+        }
+      }
+
+      Row {
+        spacing: Style.space(14)
+
+        Repeater {
+          model: root.kindChoices
+
+          delegate: Row {
+            id: choice
+            required property var modelData
+            required property int index
+            readonly property bool checked: root.checkedKinds.indexOf(modelData.kind) >= 0
+            spacing: Style.space(4)
+
+            Text {
+              text: choice.checked ? "󰄲" : "󰄱"
+              color: choice.checked ? Color.accent : root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Text {
+              text: choice.modelData.title
+              color: choice.checked || choiceArea.containsMouse ? root.foreground : root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              anchors.verticalCenter: parent.verticalCenter
+
+              MouseArea {
+                id: choiceArea
+                // The box and its word both toggle it.
+                x: -choice.spacing - Style.space(14)
+                width: parent.width - x
+                height: parent.height
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.toggleKind(choice.modelData.kind)
+              }
+            }
           }
         }
       }
@@ -395,7 +470,7 @@ Panel {
 
       Text {
         visible: root.hits.length > 0
-        text: "Enter open  ·  Shift+Enter all results in ShowMe  ·  Esc close"
+        text: "Enter open  ·  Shift+Enter all results in ShowMe  ·  Alt+1–6 kinds  ·  Esc close"
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption

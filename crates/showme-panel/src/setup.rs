@@ -272,7 +272,7 @@ fn done_page() -> gtk::Box {
     page.append(&heading("That's it"));
     let key = integrate::bound_key().map(|key| key.replace(", ", "+")).unwrap_or_else(|| "your key".into());
     page.append(&note(&format!(
-        "ShowMe reads your folders now, newest files first, and keeps up as they change. Press {key} to search; what's read already is searchable straight away.\n\nIn the panel: ↑↓ to move, Enter opens, Space plays, Ctrl+C copies the file, Ctrl+O opens the big window, Alt+1–7 picks a kind, Ctrl+, opens the settings. Start with code: to search code.\n\nSettings: showme-panel --settings"
+        "ShowMe reads your folders now, newest files first, and keeps up as they change. Press {key} to search; what's read already is searchable straight away.\n\nIn the panel: ↑↓ to move, Enter opens, Space plays, Ctrl+C copies the file, Ctrl+O opens the big window, Alt+1–6 checks a kind (or start with pdf:, video:…), Ctrl+, opens the settings. Start with code: to search code.\n\nSettings: showme-panel --settings"
     )));
     let search = gtk::Button::with_label("Search now");
     search.set_halign(gtk::Align::Start);

@@ -40,6 +40,43 @@ impl FileKind {
         }
     }
 
+    /// The kind in a sentence, as many: "PDFs", "videos".
+    pub fn title(self) -> &'static str {
+        match self {
+            FileKind::Screenshot => "screenshots",
+            FileKind::Image => "images",
+            FileKind::Pdf => "PDFs",
+            FileKind::Doc => "documents",
+            FileKind::Audio => "recordings",
+            FileKind::Video => "videos",
+            FileKind::Code => "code",
+        }
+    }
+
+    /// "PDFs and videos": some kinds, for a footer or a message; None for none.
+    pub fn titles(kinds: &[FileKind]) -> Option<String> {
+        let names: Vec<&str> = kinds.iter().map(|kind| kind.title()).collect();
+        match names.as_slice() {
+            [] => None,
+            [one] => Some(one.to_string()),
+            [most @ .., last] => Some(format!("{} and {last}", most.join(", "))),
+        }
+    }
+
+    /// The kinds a word before a colon in a search names ("pdf: lease" → PDFs), in either number and any case. Code
+    /// isn't one: "code:" searches the code index.
+    pub fn named(word: &str) -> Option<&'static [FileKind]> {
+        Some(match word.to_ascii_lowercase().as_str() {
+            "screenshot" | "screenshots" => &[FileKind::Screenshot],
+            "image" | "images" | "photo" | "photos" | "picture" | "pictures" => &[FileKind::Image],
+            "pdf" | "pdfs" => &[FileKind::Pdf],
+            "doc" | "docs" | "document" | "documents" => &[FileKind::Doc],
+            "video" | "videos" => &[FileKind::Video],
+            "audio" | "recording" | "recordings" => &[FileKind::Audio],
+            _ => return None,
+        })
+    }
+
     /// The order of the first indexing pass: what people look for most comes first.
     pub(crate) const INDEXING_ORDER_SQL: &'static str = "CASE kind WHEN 'screenshot' THEN 0 WHEN 'image' THEN 1 \
         WHEN 'pdf' THEN 2 WHEN 'doc' THEN 3 WHEN 'audio' THEN 4 WHEN 'video' THEN 5 ELSE 6 END";

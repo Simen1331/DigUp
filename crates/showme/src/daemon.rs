@@ -31,7 +31,7 @@ use showme_embed::{LlamaEmbedder, LlamaModels, llama, models};
 use std::collections::VecDeque;
 
 use showme_core::proto::{self as protocol, FolderProgress, Hit, Place, Request, Response, Status};
-use showme_core::settings::Config;
+use showme_core::settings::{Collection, Config};
 
 /// What every thread shares.
 struct Shared {
@@ -1008,27 +1008,25 @@ fn search(
     words_only: bool,
 ) -> Response {
     let started = Instant::now();
-    let kinds = match protocol::kinds(kinds) {
+    let mut kinds = match protocol::kinds(kinds) {
         Ok(kinds) => kinds,
         Err(error) => return Response::error(error),
     };
     let code_text = code_query::text(query);
     let is_code = code_text.is_some();
-    // "business: pricing": the business collection's folders alone, in the main index.
-    let collection = if is_code {
-        None
-    } else {
-        let config = shared.config.lock().unwrap();
-        config.collection_query(query).map(|(collection, rest)| (collection.name.clone(), collection.roots(), rest))
-    };
-    let text = match (&code_text, &collection) {
-        (Some(code), _) => code.clone(),
-        (None, Some((_, _, rest))) => rest.to_string(),
-        (None, None) => query.to_string(),
-    };
-    let (collection, folders) = match collection {
-        Some((name, roots, _)) => (Some(name), roots),
-        None => (None, Vec::new()),
+    // "business: pdf: pricing": the business collection's PDFs alone, in the main index. Kinds typed so win over
+    // the request's (the panel's checked kinds).
+    let (text, collection, folders) = match &code_text {
+        Some(code) => (code.clone(), None, Vec::new()),
+        None => {
+            let config = shared.config.lock().unwrap();
+            let scope = config.scope(query);
+            if !scope.kinds.is_empty() {
+                kinds = Some(scope.kinds.iter().copied().collect());
+            }
+            let folders = scope.collection.map(Collection::roots).unwrap_or_default();
+            (scope.rest.to_string(), scope.collection.map(|collection| collection.name.clone()), folders)
+        }
     };
     let terms = showme_core::searcher::terms(&text);
     if text.trim().is_empty() {

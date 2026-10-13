@@ -65,7 +65,8 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Searches the index. "code: <words>" searches the code index, "<collection>: <words>" a collection's folders.
+    /// Searches the index. "code: <words>" searches the code index, "<collection>: <words>" a collection's folders,
+    /// "pdf: <words>" (or video:, images:…) those kinds alone.
     Search {
         words: Vec<String>,
         #[command(flatten)]
@@ -585,13 +586,17 @@ fn search(query: &str, args: &IndexArgs, tuning: &Tuning, kinds: &[FileKind], n:
         );
         return print_hits(&hits, json, &footer);
     }
-    // "business: pricing": the business collection's folders alone.
+    // "business: pdf: pricing": the business collection's PDFs alone.
     let settings = if code.is_none() { config::Config::load().ok() } else { None };
-    let named = settings.as_ref().and_then(|settings| settings.collection_query(&query));
-    let folders = named.map(|(collection, _)| collection.roots()).unwrap_or_default();
-    let query = named.map(|(_, rest)| rest.to_string()).unwrap_or(query);
+    let scope = settings.as_ref().map(|settings| settings.scope(&query));
+    let folders = scope.as_ref().and_then(|scope| scope.collection).map(|collection| collection.roots());
+    let mut kinds = kinds.to_vec();
+    if let Some(scope) = scope.as_ref().filter(|scope| !scope.kinds.is_empty()) {
+        kinds = scope.kinds.clone();
+    }
+    let query = scope.as_ref().map(|scope| scope.rest.to_string()).unwrap_or(query);
     if query.is_empty() {
-        bail!("search the collection for what?");
+        bail!("search them for what?");
     }
     let store = IndexArgs { code: code.is_some(), ..args.clone() }.store()?;
     let mut searcher = Searcher::new(&store, true)?;
@@ -601,7 +606,7 @@ fn search(query: &str, args: &IndexArgs, tuning: &Tuning, kinds: &[FileKind], n:
     let encoded = Instant::now();
     let options = SearchOptions {
         kinds: if kinds.is_empty() { None } else { Some(kinds.iter().copied().collect()) },
-        folders,
+        folders: folders.unwrap_or_default(),
         limit: n,
         z_gate: tuning.zgate,
         word_weight: tuning.word_weight,

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use crate::crawler::standardized;
 use crate::folder_selection::FolderSelection;
-use crate::model::IndexOptions;
+use crate::model::{FileKind, IndexOptions};
 use crate::paths;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -83,6 +83,16 @@ pub fn collection_name_ok(name: &str) -> bool {
     !name.is_empty()
         && name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
         && !name.eq_ignore_ascii_case(crate::model::code_query::PREFIX.trim_end_matches(':'))
+        && FileKind::named(name).is_none()
+}
+
+/// What a search names before what it looks for: a collection and kinds, in any order ("business: pdf: pricing" →
+/// the business collection's PDFs, "pricing").
+#[derive(Debug, Clone, PartialEq)]
+pub struct Scope<'c, 'q> {
+    pub collection: Option<&'c Collection>,
+    pub kinds: Vec<FileKind>,
+    pub rest: &'q str,
 }
 
 /// The programs results open in: "auto" finds one; otherwise a command with {file}, {line}, {page}, {seconds} and
@@ -219,14 +229,30 @@ impl Config {
         FolderSelection::new(&folders, &skipped, &[])
     }
 
-    /// The collection a search names ("Business: pricing" → business, "pricing"), and what's searched for in it.
-    pub fn collection_query<'q>(&self, query: &'q str) -> Option<(&Collection, &'q str)> {
-        let (head, rest) = query.trim_start().split_once(':')?;
-        let collection = self
-            .collections
-            .iter()
-            .find(|collection| !collection.name.is_empty() && collection.name.eq_ignore_ascii_case(head.trim_end()))?;
-        Some((collection, rest.trim()))
+    /// The collection and kinds a search names, and what's searched for in them.
+    pub fn scope<'q>(&self, query: &'q str) -> Scope<'_, 'q> {
+        let mut scope = Scope { collection: None, kinds: Vec::new(), rest: query.trim() };
+        while let Some((head, rest)) = scope.rest.split_once(':') {
+            let head = head.trim();
+            if let Some(kinds) = FileKind::named(head) {
+                for kind in kinds {
+                    if !scope.kinds.contains(kind) {
+                        scope.kinds.push(*kind);
+                    }
+                }
+            } else if scope.collection.is_none()
+                && let Some(collection) = self
+                    .collections
+                    .iter()
+                    .find(|collection| !collection.name.is_empty() && collection.name.eq_ignore_ascii_case(head))
+            {
+                scope.collection = Some(collection);
+            } else {
+                break;
+            }
+            scope.rest = rest.trim();
+        }
+        scope
     }
 
     /// The main index's folders (without those another one already searches whole), and its options.
@@ -280,14 +306,26 @@ mod tests {
     fn a_search_can_name_a_collection() {
         let text = "folders = [\"/b\"]\n\n[[collections]]\nname = \"business\"\nfolders = [\"/b/Business\"]\n";
         let config: Config = toml::from_str(text).unwrap();
-        let (collection, rest) = config.collection_query("  Business: pricing power").unwrap();
-        assert_eq!((collection.name.as_str(), rest), ("business", "pricing power"));
-        assert_eq!(collection.roots(), ["/b/Business"]);
-        assert!(config.collection_query("psychology: habits").is_none());
-        assert!(config.collection_query("business plan").is_none());
+        let scope = config.scope("  Business: pricing power");
+        assert_eq!((scope.collection.unwrap().name.as_str(), scope.rest), ("business", "pricing power"));
+        assert_eq!(scope.collection.unwrap().roots(), ["/b/Business"]);
+        assert!(config.scope("psychology: habits").collection.is_none());
+        assert_eq!(config.scope("business plan").rest, "business plan");
+        // Kinds too, before or after the collection.
+        let scope = config.scope("pdf: business: Video: negotiating");
+        assert_eq!(scope.collection.unwrap().name, "business");
+        assert_eq!((scope.kinds.as_slice(), scope.rest), ([FileKind::Pdf, FileKind::Video].as_slice(), "negotiating"));
+        assert_eq!(FileKind::titles(&scope.kinds).as_deref(), Some("PDFs and videos"));
+        assert_eq!(config.scope("code: retry").rest, "code: retry"); // the code index's, not a kind
+        assert_eq!(config.scope("note: call mum").rest, "note: call mum");
         let back: Config = toml::from_str(&toml::to_string_pretty(&config).unwrap()).unwrap();
         assert_eq!(back, config);
-        assert!(collection_name_ok("psych-notes") && !collection_name_ok("code") && !collection_name_ok("two words"));
+        assert!(
+            collection_name_ok("psych-notes")
+                && !collection_name_ok("code")
+                && !collection_name_ok("two words")
+                && !collection_name_ok("PDF")
+        );
     }
 
     #[test]

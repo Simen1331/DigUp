@@ -132,6 +132,32 @@ window.showme, window.showme-window {
   color: alpha(@text, 0.65);
   padding: 24px;
 }
+.showme-kinds {
+  margin: 0 14px 10px 46px;
+}
+.showme-kinds checkbutton {
+  color: alpha(@text, 0.6);
+  font-size: 12px;
+  padding: 0;
+}
+.showme-kinds checkbutton:checked {
+  color: @text;
+}
+.showme-kinds check {
+  min-width: 12px;
+  min-height: 12px;
+  margin-right: 6px;
+  background: transparent;
+  border: 1px solid alpha(@text, 0.4);
+  border-radius: 0;
+  box-shadow: none;
+  -gtk-icon-size: 10px;
+}
+.showme-kinds check:checked {
+  background-color: @selected-text;
+  border-color: @selected-text;
+  color: @base;
+}
 .showme-filter {
   background: transparent;
   color: alpha(@text, 0.6);
