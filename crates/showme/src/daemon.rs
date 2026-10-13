@@ -24,13 +24,13 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use showme_core::embedder::{Embedder, Embedding, WorkerError, WorkerInfo};
 use showme_core::indexer::{Indexer, MakeEmbedder};
-use showme_core::model::{code_query, prompts};
+use showme_core::model::{FileKind, code_query, prompts};
 use showme_core::searcher::{SearchOptions, Searcher, strong_count};
 use showme_core::store::IndexStore;
 use showme_embed::{LlamaEmbedder, LlamaModels, llama, models};
 use std::collections::VecDeque;
 
-use showme_core::proto::{self as protocol, FolderProgress, Hit, Request, Response, Status};
+use showme_core::proto::{self as protocol, FolderProgress, Hit, Place, Request, Response, Status};
 use showme_core::settings::Config;
 
 /// What every thread shares.
@@ -404,13 +404,16 @@ fn index_with(shared: &Arc<Shared>, config: &Config) -> Result<Stop> {
         };
         let blocker = shared.control().blocker.clone();
         let waiting = main.store.pending_count()? + code.store.pending_count()?;
+        // Long files not read to the end wait on a pause or a blocker too.
+        let unread = waiting > 0 || main.store.unfinished_count()?.0 > 0;
         shared.update(|status| {
             (status.state, status.detail) = match (paused, &blocker) {
-                (true, _) if waiting > 0 => ("paused".into(), step_done.then(|| "step".into())),
-                (false, Some(why)) if waiting > 0 => ("waiting".into(), Some(why.clone())),
+                (true, _) if unread => ("paused".into(), step_done.then(|| "step".into())),
+                (false, Some(why)) if unread => ("waiting".into(), Some(why.clone())),
                 _ => ("idle".into(), None),
             };
             status.current = None;
+            status.place = None;
         });
         // A big pass is through: say so once (a few new files at a time aren't news).
         let indexed = shared.indexed.swap(0, Ordering::Relaxed);
@@ -550,6 +553,7 @@ fn embed(shared: &Shared, part: &mut Part, only: Option<&[i64]>) -> Result<()> {
         shared.indexed.fetch_add(1, Ordering::Relaxed);
         shared.update(|status| {
             status.current = Some(event.path.clone());
+            status.place = None;
             status.done = event.done;
             status.total = event.total;
             if event.state == "failed" {
@@ -606,6 +610,7 @@ fn finish_long_files(shared: &Shared, part: &mut Part, has_code: bool) -> Result
         shared.generation.fetch_add(1, Ordering::Relaxed);
         shared.update(|status| {
             status.current = Some(step.path.clone());
+            status.place = Some(Place { at: step.at, of: step.of, pages: step.kind == FileKind::Pdf });
             status.done = step.done;
             status.total = step.total;
         });
@@ -646,12 +651,9 @@ fn counts(shared: &Shared, main: &Part, code: &Part) {
     let mut folders = Vec::new();
     for part in [main, code] {
         let roots: Vec<String> = part.roots.iter().map(|root| root.to_string_lossy().into_owned()).collect();
-        if let Ok(progress) = part.store.progress(&roots) {
-            folders.extend(roots.into_iter().zip(progress).map(|(path, (files, read))| FolderProgress {
-                path,
-                files,
-                read,
-                code: part.code,
+        if let (Ok(progress), Ok(long)) = (part.store.progress(&roots), part.store.long_progress(&roots)) {
+            folders.extend(roots.into_iter().zip(progress).zip(long).map(|((path, (files, read)), (long, left))| {
+                FolderProgress { path, files, read, long, left, code: part.code }
             }));
         }
     }

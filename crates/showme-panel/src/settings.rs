@@ -423,6 +423,8 @@ struct Progress {
     widget: gtk::Box,
     label: gtk::Label,
     bar: gtk::ProgressBar,
+    /// The file being read now (and how far into it, for a long one).
+    current: gtk::Label,
     pause: gtk::Button,
     paused: Cell<bool>,
     /// (when, files read) over the last two minutes: the pace the time left is reckoned from.
@@ -435,6 +437,8 @@ impl Progress {
         widget.add_css_class("showme-progress");
         let label = gtk::Label::builder().xalign(0.0).wrap(true).build();
         let bar = gtk::ProgressBar::new();
+        let current = gtk::Label::builder().xalign(0.0).ellipsize(pango::EllipsizeMode::Middle).build();
+        current.add_css_class("showme-sub");
         let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let pause = gtk::Button::with_label("Pause");
         let steps =
@@ -450,6 +454,7 @@ impl Progress {
         controls.append(&step);
         widget.append(&label);
         widget.append(&bar);
+        widget.append(&current);
         widget.append(&controls);
         widget.append(&note(
             "A big folder can take hours the first time. With steps, ShowMe pauses after each one and tells you; \
@@ -459,6 +464,7 @@ impl Progress {
             widget,
             label,
             bar,
+            current,
             pause,
             paused: Cell::new(false),
             samples: RefCell::new(VecDeque::new()),
@@ -483,7 +489,7 @@ impl Progress {
         let paused = status.state == "paused";
         self.paused.set(paused);
         self.pause.set_label(if paused { "Resume" } else { "Pause" });
-        self.pause.set_sensitive(status.pending > 0 || status.state == "finishing");
+        self.pause.set_sensitive(status.pending > 0 || status.unfinished > 0);
         self.bar.set_fraction(read as f64 / status.files as f64);
         let share = 100 * read / status.files;
         let now = Instant::now();
@@ -506,8 +512,19 @@ impl Progress {
             }
             _ => None,
         };
-        let text = if status.pending == 0 && status.state == "finishing" {
-            format!("All {} files are searchable. Reading the rest of {} long files.", status.files, status.unfinished)
+        let text = if status.pending == 0 && status.unfinished > 0 {
+            // The second pass: every file is in, by its start; long ones are read on to the end.
+            let further = match status.state.as_str() {
+                "paused" => "Reading further into long files is paused",
+                "waiting" => "Reading further into long files is waiting",
+                _ => "Reading further into long files",
+            };
+            let long =
+                if status.unfinished == 1 { "1 file left".into() } else { format!("{} files left", status.unfinished) };
+            format!(
+                "✓ Every file is searchable: {} files, by name and how they begin.\n{further}: {long}.",
+                status.files
+            )
         } else if status.pending == 0 {
             format!("All {} files are read.", status.files)
         } else if paused && status.detail.as_deref() == Some("step") {
@@ -524,6 +541,19 @@ impl Progress {
         };
         self.label.set_text(&text);
         self.bar.set_visible(status.pending > 0);
+        let reading = matches!(status.state.as_str(), "indexing" | "finishing");
+        match status.current.as_deref().filter(|_| reading) {
+            Some(path) => {
+                let mut text = format!("Now: {}", short_path(path, status));
+                if let Some(place) = &status.place {
+                    let unit = if place.pages { "page" } else { "part" };
+                    text.push_str(&format!(", {unit} {} of {}", place.at.min(place.of), place.of));
+                }
+                self.current.set_text(&text);
+                self.current.set_visible(true);
+            }
+            None => self.current.set_visible(false),
+        }
     }
 }
 
@@ -602,14 +632,34 @@ impl StatusPage {
     }
 }
 
+/// A file's path from inside its chosen folder ("Bøker/Dune.pdf"), or from home.
+fn short_path(path: &str, status: &Status) -> String {
+    let root = status
+        .folders
+        .iter()
+        .map(|folder| folder.path.trim_end_matches('/'))
+        .filter(|root| path.strip_prefix(root).is_some_and(|rest| rest.starts_with('/')))
+        .max_by_key(|root| root.len());
+    match root {
+        Some(root) => {
+            let name = root.rsplit('/').next().unwrap_or(root);
+            format!("{name}{}", &path[root.len()..])
+        }
+        None => crate::results::tilde(path),
+    }
+}
+
 /// "Reading 120 of 3 400 files…", as a sentence.
 pub fn describe(status: &Status) -> String {
     let detail = status.detail.as_deref().unwrap_or("");
     match status.state.as_str() {
-        "indexing" | "finishing" if status.total > 0 => {
-            format!("Reading files: {} of {} done.", status.done, status.total)
-        }
-        "indexing" | "finishing" => "Reading files.".into(),
+        "finishing" if status.total > 0 => format!(
+            "Every file is searchable. Reading further into {} long files: {} of {} pages and parts done.",
+            status.unfinished, status.done, status.total
+        ),
+        "finishing" => format!("Every file is searchable. Reading further into {} long files.", status.unfinished),
+        "indexing" if status.total > 0 => format!("Reading files: {} of {} done.", status.done, status.total),
+        "indexing" => "Reading files.".into(),
         "syncing" => "Looking for changes.".into(),
         "starting" => "Starting.".into(),
         "paused" => "Paused.".into(),

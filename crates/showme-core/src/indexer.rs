@@ -96,6 +96,9 @@ pub struct Step {
     /// Long files not finished yet, this one included until its last step.
     pub files: usize,
     pub path: String,
+    /// How far into this file the step reads, and where the file ends (pages of a PDF, chunks of anything else).
+    pub at: usize,
+    pub of: usize,
     pub kind: FileKind,
     /// "partial" until the file's last step, then "done".
     pub state: String,
@@ -332,7 +335,7 @@ impl<'a> Indexer<'a> {
         should_stop: &mut dyn FnMut() -> bool,
         on_step: &mut dyn FnMut(&Step),
     ) -> Result<BTreeMap<String, usize>> {
-        let mut jobs = Vec::new();
+        let (mut jobs, mut ends) = (Vec::new(), Vec::new());
         for file in self.store.unfinished(Some(&self.kinds))? {
             let info = self.store.info(file.id)?;
             let size = if file.kind == FileKind::Pdf { self.options.pdf_step } else { self.options.doc_step };
@@ -344,6 +347,7 @@ impl<'a> Indexer<'a> {
             let end = info.get("read_end").and_then(|value| value.parse().ok()).unwrap_or(0).max(start + 1);
             while start < end {
                 jobs.push(Job { files: vec![file.clone()], step: Some(start..(start + size).min(end)) });
+                ends.push(end);
                 start += size;
             }
         }
@@ -371,6 +375,8 @@ impl<'a> Indexer<'a> {
                     total,
                     files,
                     path: file.path.clone(),
+                    at: job.step.as_ref().map_or(0, |step| step.end),
+                    of: ends[index],
                     kind: file.kind,
                     state: state.clone(),
                     seconds,

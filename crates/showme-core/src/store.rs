@@ -406,6 +406,23 @@ impl IndexStore {
             .collect()
     }
 
+    /// For each root: its long files still being read, and how many of their pages and chunks are left.
+    pub fn long_progress(&self, roots: &[String]) -> Result<Vec<(usize, usize)>> {
+        let mut statement = self.db.prepare(
+            "SELECT COUNT(*), COALESCE(SUM(MAX(0, CAST(json_extract(info, '$.read_end') AS INTEGER)
+                                               - CAST(json_extract(info, '$.read_to') AS INTEGER))), 0)
+            FROM files WHERE state = 'partial' AND path >= ? AND path < ?",
+        )?;
+        roots
+            .iter()
+            .map(|root| {
+                statement.query_row(params_from_iter(prefix_range(root)), |row| {
+                    Ok((row.get::<_, i64>(0)? as usize, row.get::<_, i64>(1)? as usize))
+                })
+            })
+            .collect()
+    }
+
     /// What indexing learned about a file (`finish`'s `info`).
     pub fn info(&self, id: i64) -> Result<Info> {
         let json: Option<String> =
@@ -595,6 +612,25 @@ mod tests {
         store.insert(&candidate("/AB/other.txt", 3)).unwrap();
         store.finish(read, "done", None, &Info::new()).unwrap();
         assert_eq!(store.progress(&["/A".into(), "/AB".into(), "/C".into()]).unwrap(), vec![(2, 1), (1, 0), (0, 0)]);
+    }
+
+    #[test]
+    fn long_progress_counts_what_is_left_in_each_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = IndexStore::open_main(dir.path()).unwrap();
+        let book = store.insert(&candidate("/A/book.txt", 1)).unwrap();
+        let notes = store.insert(&candidate("/A/notes.txt", 2)).unwrap();
+        let other = store.insert(&candidate("/AB/other.txt", 3)).unwrap();
+        let place = |to: usize, end: usize| {
+            Info::from([("read_to".into(), to.to_string()), ("read_end".into(), end.to_string())])
+        };
+        store.finish(book, "partial", None, &place(40, 100)).unwrap();
+        store.finish(notes, "done", None, &Info::new()).unwrap();
+        store.finish(other, "partial", None, &place(8, 20)).unwrap();
+        assert_eq!(
+            store.long_progress(&["/A".into(), "/AB".into(), "/C".into()]).unwrap(),
+            vec![(1, 60), (1, 12), (0, 0)]
+        );
     }
 
     #[test]

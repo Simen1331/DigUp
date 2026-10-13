@@ -177,6 +177,9 @@ pub struct Status {
     /// The file being read now, and how far the current run has got.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current: Option<String>,
+    /// How far into the file being read now, while the rest of a long file is read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<Place>,
     pub done: usize,
     pub total: usize,
     /// Folders that aren't there right now (an unplugged drive): their files stay indexed.
@@ -206,9 +209,22 @@ pub struct FolderProgress {
     pub path: String,
     pub files: usize,
     pub read: usize,
+    /// Its long files still being read, and their pages and chunks left.
+    #[serde(default)]
+    pub long: usize,
+    #[serde(default)]
+    pub left: usize,
     /// One of the code folders.
     #[serde(default)]
     pub code: bool,
+}
+
+/// Where in a long file the reading has got to: `at` of `of` pages (a PDF) or chunks (anything else).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Place {
+    pub at: usize,
+    pub of: usize,
+    pub pages: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

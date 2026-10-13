@@ -186,13 +186,19 @@ impl FolderPicker {
     pub fn set_progress(&self, folders: &[FolderProgress]) {
         for (path, label) in self.reading.borrow().iter() {
             let progress = folders.iter().find(|folder| folder.code == self.code && &folder.path == path);
-            match progress {
-                Some(folder) if folder.read < folder.files => {
-                    label.set_text(&format!("{}% read", 100 * folder.read / folder.files));
-                    label.set_visible(true);
+            let text = match progress {
+                Some(folder) if folder.read < folder.files => format!("{}% read", 100 * folder.read / folder.files),
+                // Every file in, by its start: what's left of the long ones.
+                Some(folder) if folder.long > 0 => {
+                    let files =
+                        if folder.long == 1 { "1 long file".into() } else { format!("{} long files", folder.long) };
+                    format!("{files} to finish, {} pages and parts left", folder.left)
                 }
-                _ => label.set_visible(false),
-            }
+                Some(folder) if folder.files > 0 => "all read".into(),
+                _ => String::new(),
+            };
+            label.set_text(&text);
+            label.set_visible(!text.is_empty());
         }
     }
 
