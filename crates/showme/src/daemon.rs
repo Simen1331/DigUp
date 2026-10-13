@@ -381,7 +381,7 @@ fn index_with(shared: &Arc<Shared>, config: &Config) -> Result<Stop> {
             && code.store.pending_count()? == 0
             && main.store.unfinished_count()?.0 > 0
         {
-            finish_long_files(shared, &mut main)?;
+            finish_long_files(shared, &mut main, has_code)?;
             counts(shared, &main, &code);
             let control = shared.control();
             if control.sync || control.code_sync && has_code {
@@ -586,15 +586,16 @@ fn step_over(shared: &Shared, mut control: MutexGuard<'_, Control>) -> bool {
     true
 }
 
-fn finish_long_files(shared: &Shared, part: &mut Part) -> Result<()> {
+fn finish_long_files(shared: &Shared, part: &mut Part, has_code: bool) -> Result<()> {
     shared.update(|status| {
         status.state = "finishing".into();
         status.detail = None;
     });
     let mut should_stop = || {
         let control = shared.control();
+        // Without code folders nothing takes `code_sync`: left to count, it would stop every run before its first step.
         control.sync
-            || control.code_sync
+            || control.code_sync && has_code
             || control.stop
             || control.reload
             || control.paused
@@ -742,6 +743,12 @@ fn watch_loop(shared: &Arc<Shared>) {
             let next = [main_due, code_due, Some(hourly)].into_iter().flatten().min().unwrap();
             match events.recv_timeout(next.saturating_duration_since(Instant::now())) {
                 Ok(Ok(event)) => {
+                    // A file or folder opened or read changes nothing, and syncing opens every folder: left to count,
+                    // each sync would set off the next. A file closed after writing is a change.
+                    use notify::event::{AccessKind, AccessMode, EventKind};
+                    if matches!(event.kind, EventKind::Access(kind) if kind != AccessKind::Close(AccessMode::Write)) {
+                        continue;
+                    }
                     let rescan = event.need_rescan();
                     for path in &event.paths {
                         let hidden = path.components().any(|part| part.as_os_str().to_string_lossy().starts_with('.'));
